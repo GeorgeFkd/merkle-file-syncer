@@ -7,12 +7,21 @@ std::optional<QDateTime> FileDb::readMtime(const QString &file) const {
     return std::nullopt;
 }
 
+void FileDb::removeFileMtime(const QString &file) {
+    fileMtimes.remove(file);
+}
+
+QSet<QString> FileDb::allTrackedFiles() const {
+    return QSet<QString>(fileMtimes.keyBegin(), fileMtimes.keyEnd());
+}
+
 void FileDb::updateFileMtime(const QString &file, const QDateTime &mtime) {
     fileMtimes[file] = mtime;
 }
 
 std::optional<QString> FileDb::readUserDirectory(const QString &user, const QString &password) const {
     if (!users.contains(user)) {
+        qDebug() << "User: " << user << " not found.\n Will be created.\n";
         return std::nullopt;
     }
     const auto &record = users[user];

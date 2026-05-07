@@ -4,6 +4,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include "FileDb.h"
+#include <QString>
 class FileClient{
 public:
     FileClient();
@@ -15,4 +16,7 @@ private:
     void handleAuthResponse(AuthResponseMessage *msg);
     void handleUnrecognized(Message *msg);
     void clientTick();
+    FileDb database;
+    QString getUserRootDirectory(const QString& username);
+    bool currentlyDoingSyncOps = false;
 };

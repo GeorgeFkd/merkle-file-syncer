@@ -10,5 +10,7 @@ public:
 private:
     void handleAuth(QLocalSocket *socket, AuthMessage *msg);
     void handleUnrecognized(QLocalSocket *socket, Message *msg);
+    void handleSyncRequest(QLocalSocket *socket,SyncRequestMessage *msg);
+    QString computeUserDirectory(const QString &username);
     FileDb database;
 };
