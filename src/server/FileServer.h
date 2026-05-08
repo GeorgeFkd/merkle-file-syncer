@@ -13,4 +13,5 @@ private:
     void handleSyncRequest(QLocalSocket *socket,SyncRequestMessage *msg);
     QString computeUserDirectory(const QString &username);
     FileDb database;
+    QByteArray buffer;
 };

@@ -1,4 +1,5 @@
 #include "FileClient.h"
+#include "Messages.h"
 #include <QCoreApplication>
 #include <QDirIterator>
 FileClient::FileClient() {}
@@ -15,6 +16,10 @@ void FileClient::init() {
         handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
         break;
       }
+        case MessageType::SyncRequest: {
+          handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
+          break;
+        }
       default: {
         handleUnrecognized(msg);
         break;
@@ -26,14 +31,72 @@ void FileClient::init() {
   timer.start(3000);
 }
 
+void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
+    pendingMessages--;
+    if (msg->operationStatus == FileOperationStatus::Rejected) {
+        // server has newer version, write it to local filesystem
+        // TODO: handle rejected case
+        qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
+    }
+    
+    if (pendingMessages == 0) {
+        qDebug() << "All of current sync items have been synced.";
+        Q_EMIT syncCompleted();
+        timer.start(3000);
+    }
+}
+
 QString FileClient::getUserRootDirectory(const QString &username) {
   auto path =
       QCoreApplication::applicationDirPath() + "/client_root/" + username;
   QDir().mkpath(path);
   return path;
 }
+
+QList<QString> FileClient::discoverNewFiles(const QString &rootDir) {
+  QList<QString> newFiles;
+  QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    QString fullPath = it.next();
+    QFileInfo info(fullPath);
+    QDateTime mtime = info.lastModified();
+    auto storedMtime = database.readMtime(fullPath);
+    if (storedMtime.has_value() && storedMtime.value() == mtime) {
+      // already stored
+      continue;
+    }
+    database.updateFileMtime(fullPath, mtime);
+    qDebug() << "Discovered new/modified file:" << fullPath
+             << "mtime:" << mtime;
+    newFiles.append(fullPath);
+  }
+  return newFiles;
+}
+
+QList<QString>
+FileClient::discoverDeletedFiles(const QString &rootDir,
+                                 const QSet<QString> &trackedFiles) {
+  QList<QString> deletedFiles;
+  QSet<QString> currentFiles;
+  QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    currentFiles.insert(it.next());
+  }
+  for (const auto &trackedFile : trackedFiles) {
+    if (!currentFiles.contains(trackedFile)) {
+      qDebug() << "Discovered deleted file: " << trackedFile;
+      // database.removeFileMtime(trackedFile);
+      // when deleting we cant remove the fileMtime here cos its sent to the server
+      deletedFiles.append(trackedFile);
+    }
+  }
+
+  return deletedFiles;
+}
+
 void FileClient::clientTick() {
-  if(currentlyDoingSyncOps) return;
+  if (currentlyDoingSyncOps)
+    return;
   currentlyDoingSyncOps = true;
   qDebug() << "Client syncing stuff" << "\n";
   timer.stop();
@@ -44,60 +107,41 @@ void FileClient::clientTick() {
 
   database.storeUser(username, password, rootDir);
   auto trackedFiles = database.allTrackedFiles();
-
-  QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
-  // discover new files
-  while (it.hasNext()) {
-    QString fullPath = it.next();
-    QFileInfo info(fullPath);
-    QDateTime mtime = info.lastModified();
-
-    database.updateFileMtime(fullPath, mtime);
-    qDebug() << "Discovered file:" << fullPath << "mtime:" << mtime;
-
-    QFile file(fullPath);
+  auto newFiles = discoverNewFiles(rootDir);
+  for (const auto &path : newFiles) {
+    QFileInfo info(path);
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-      qDebug() << "Failed to open file:" << fullPath << file.errorString();
+      qDebug() << "Failed to open file:" << path << file.errorString();
       continue;
     }
-
     SyncRequestMessage msg;
     msg.username = username;
     msg.password = password;
-    msg.path = QDir(rootDir).relativeFilePath(fullPath).toStdString();
+    msg.path = QDir(rootDir).relativeFilePath(path).toStdString();
     msg.contents = file.readAll();
-    msg.mtime = mtime.toString(Qt::ISODate).toStdString();
+    msg.mtime = info.lastModified().toString(Qt::ISODate).toStdString();
     msg.operationType = FileOperationType::Write;
     msg.operationStatus = FileOperationStatus::DoIt;
-
     file.close();
-    socket.write(msg.serialize());
+    sendMessage(msg);
   }
 
-  // find deleted files
-  QSet<QString> currentFiles;
-  QDirIterator check(rootDir, QDir::Files, QDirIterator::Subdirectories);
-  while (check.hasNext()) {
-    currentFiles.insert(check.next());
+  auto deletedFiles = discoverDeletedFiles(rootDir, trackedFiles);
+  for (const auto &path : deletedFiles) {
+    auto mtime = database.readMtime(path);
+    database.removeFileMtime(path);
+    SyncRequestMessage msg;
+    msg.username = username;
+    msg.password = password;
+    msg.path = QDir(rootDir).relativeFilePath(path).toStdString();
+    msg.contents = {};
+    msg.mtime = mtime.value().toString(Qt::ISODate).toStdString();
+    msg.operationType = FileOperationType::Delete;
+    msg.operationStatus = FileOperationStatus::DoIt;
+    sendMessage(msg);
   }
-  for (const auto &trackedFile : trackedFiles) {
-    if (!currentFiles.contains(trackedFile)) {
-      // file was deleted
-      SyncRequestMessage msg;
-      msg.username = username;
-      msg.password = password;
-      msg.path = QDir(rootDir).relativeFilePath(trackedFile).toStdString();
-      msg.contents = {};
-      msg.mtime = database.readMtime(trackedFile)
-                      .value()
-                      .toString(Qt::ISODate)
-                      .toStdString();
-      msg.operationType = FileOperationType::Delete;
-      msg.operationStatus = FileOperationStatus::DoIt;
-      database.removeFileMtime(trackedFile);
-      socket.write(msg.serialize());
-    }
-  }
+  pendingMessages = newFiles.size() + deletedFiles.size();
   currentlyDoingSyncOps = false;
   timer.start(3000);
 }
@@ -107,6 +151,15 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   } else {
     qDebug() << "Auth failed";
   }
+}
+
+void FileClient::sendMessage(const Message& msg) {
+  QByteArray payload = msg.serialize();
+  QByteArray frame;
+  QDataStream stream(&frame,QIODevice::WriteOnly);
+  stream << quint32(payload.size());
+  frame.append(payload);
+  socket.write(frame);
 }
 
 void FileClient::handleUnrecognized(Message *msg) {
