@@ -7,15 +7,10 @@
 #include "FileServer.h"
 int main(int argc, char *argv[]) {
   QCoreApplication app(argc, argv);
-  QLocalServer server;
   FileServer fileServer;
+  fileServer.setRootDir("server_root");
   auto defaultServerName = QString("merkle_sync");
-  QLocalServer::removeServer(defaultServerName);
-  server.listen("merkle_sync");
-  QObject::connect(&server, &QLocalServer::newConnection, [&]() {
-    QLocalSocket *socket = server.nextPendingConnection();
-    fileServer.handleConnection(socket);
-  });
+  fileServer.listenOn(defaultServerName);
 
   std::println("Hello World from server");
   return app.exec();

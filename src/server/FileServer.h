@@ -1,17 +1,25 @@
 #pragma once
 
-#include "Messages.h"
-#include <QLocalSocket>
 #include "FileDb.h"
-class FileServer {
+#include "Messages.h"
+#include <QLocalServer>
+#include <QLocalSocket>
+class FileServer : QObject {
+  Q_OBJECT
 public:
-    void handleConnection(QLocalSocket *socket);
+  void handleConnection(QLocalSocket *socket);
+  void setRootDir(const QString &dir);
+  void listenOn(const QString &addr);
+  bool isListening();
+  QString serverName();
+  QString getUserRootDirectory(const QString &username);
 
 private:
-    void handleAuth(QLocalSocket *socket, AuthMessage *msg);
-    void handleUnrecognized(QLocalSocket *socket, Message *msg);
-    void handleSyncRequest(QLocalSocket *socket,SyncRequestMessage *msg);
-    QString computeUserDirectory(const QString &username);
-    FileDb database;
-    QByteArray buffer;
+  void handleAuth(QLocalSocket *socket, AuthMessage *msg);
+  void handleUnrecognized(QLocalSocket *socket, Message *msg);
+  void handleSyncRequest(QLocalSocket *socket, SyncRequestMessage *msg);
+  FileDb database;
+  QHash<QLocalSocket *, QByteArray> buffers;
+  QString serverRootDir;
+  QLocalServer server;
 };

@@ -3,10 +3,32 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <qnamespace.h>
+
+void FileServer::listenOn(const QString &addr) {
+  QLocalServer::removeServer(addr);
+  server.listen(addr);
+  QObject::connect(&server, &QLocalServer::newConnection, [&]() {
+    qDebug() << "New connection received";
+    QLocalSocket *socket = server.nextPendingConnection();
+    handleConnection(socket);
+  });
+}
+
+QString FileServer::serverName() { return server.serverName(); }
+
+bool FileServer::isListening() { return server.isListening(); }
+
 void FileServer::handleConnection(QLocalSocket *socket) {
-  QObject::connect(socket, &QLocalSocket::readyRead, [this, socket]() {
+  qDebug() << "Handling new connection.";
+  QObject::connect(socket, &QLocalSocket::disconnected, socket,
+                   &QLocalSocket::deleteLater);
+  QObject::connect(socket, &QLocalSocket::disconnected, this,
+                   [this, socket]() { buffers.remove(socket); });
+  QObject::connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
+    qDebug() << "Ready read event fired.";
     MessageProtocol::processBuffer(
-        socket, buffer, [this, socket](Message *msg) {
+        socket, buffers[socket], [this, socket](Message *msg) {
           if (!msg) {
             qDebug() << "Failed to deserialize message";
             return;
@@ -30,12 +52,18 @@ void FileServer::handleConnection(QLocalSocket *socket) {
   });
 }
 
+void FileServer::setRootDir(const QString &dir) {
+  serverRootDir = QDir(dir).absolutePath();
+  QDir().mkpath(serverRootDir);
+  qDebug() << "Created server root at: " << serverRootDir;
+}
+
 void FileServer::handleSyncRequest(QLocalSocket *socket,
                                    SyncRequestMessage *msg) {
   qDebug() << "Handling sync request message\n";
   auto rootDir = database.readUserDirectory(msg->username, msg->password);
   if (!rootDir.has_value()) {
-    QString userDir = computeUserDirectory(msg->username);
+    QString userDir = getUserRootDirectory(msg->username);
     database.storeUser(msg->username, msg->password, userDir);
     QDir().mkpath(userDir);
     rootDir = userDir;
@@ -135,11 +163,9 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   }
 
   socket->write(response.serialize());
-  // ensure user has a director}
 }
-QString FileServer::computeUserDirectory(const QString &username) {
-  auto path =
-      QCoreApplication::applicationDirPath() + "/server_root/" + username;
+QString FileServer::getUserRootDirectory(const QString &username) {
+  auto path = serverRootDir + "/" + username;
   QDir().mkpath(path);
   return path;
 }

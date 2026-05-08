@@ -2,53 +2,67 @@
 #include "Messages.h"
 #include <QCoreApplication>
 #include <QDirIterator>
-FileClient::FileClient() {}
+#include <qnamespace.h>
+FileClient::FileClient() { socket = new QLocalSocket(this); }
 void FileClient::connectToServer(const QString &serverName) {
-  socket.connectToServer(serverName);
+  socket->connectToServer(serverName);
 }
+
+void FileClient::setManualTick() { shouldUseTimer = false; }
+
 void FileClient::init() {
-  QObject::connect(&socket, &QLocalSocket::connected, [this]() {
-    QObject::connect(&socket, &QLocalSocket::readyRead, [this]() {
-      auto bytes = socket.readAll();
-      auto msg = Message::deserialize(bytes);
+  QObject::connect(socket, &QLocalSocket::connected, this,
+                   [this]() { qDebug() << "Connected event fired."; });
+  QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
+    MessageProtocol::processBuffer(socket, buffer, [this](Message *msg) {
+      if (!msg) {
+        qDebug() << "Failed to deserialize message";
+        return;
+      }
       switch (msg->type()) {
-      case MessageType::ClientAuth: {
-        handleAuthResponse(static_cast<AuthResponseMessage *>(msg.get()));
+      case MessageType::ClientAuth:
+        handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
         break;
-      }
-        case MessageType::SyncRequest: {
-          handleSyncResponse(static_cast<SyncRequestMessage *>(msg.get()));
-          break;
-        }
-      default: {
-        handleUnrecognized(msg.get());
+      case MessageType::SyncRequest:
+        handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
         break;
-      }
+      default:
+        handleUnrecognized(msg);
+        break;
       }
     });
   });
-  QObject::connect(&timer, &QTimer::timeout, [this]() { clientTick(); });
-  timer.start(3000);
+  if (shouldUseTimer) {
+    QObject::connect(&timer, &QTimer::timeout, this,
+                     [this]() { clientTick(); });
+    timer.start(3000);
+  }
 }
 
+FileClient::~FileClient() {
+  socket->blockSignals(true);
+  QObject::disconnect(socket, nullptr, nullptr, nullptr);
+  socket->abort();
+}
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
-    pendingMessages--;
-    if (msg->operationStatus == FileOperationStatus::Rejected) {
-        // server has newer version, write it to local filesystem
-        // TODO: handle rejected case
-        qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
+  pendingMessages--;
+  if (msg->operationStatus == FileOperationStatus::Rejected) {
+    // server has newer version, write it to local filesystem
+    // TODO: handle rejected case
+    qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
+  }
+
+  if (pendingMessages == 0) {
+    qDebug() << "All of current sync items have been synced.";
+    Q_EMIT syncCompleted();
+    if (shouldUseTimer) {
+      timer.start(3000);
     }
-    
-    if (pendingMessages == 0) {
-        qDebug() << "All of current sync items have been synced.";
-        Q_EMIT syncCompleted();
-        timer.start(3000);
-    }
+  }
 }
 
 QString FileClient::getUserRootDirectory(const QString &username) {
-  auto path =
-      QCoreApplication::applicationDirPath() + "/client_root/" + username;
+  auto path = clientRootDir + "/" + username;
   QDir().mkpath(path);
   return path;
 }
@@ -86,7 +100,8 @@ FileClient::discoverDeletedFiles(const QString &rootDir,
     if (!currentFiles.contains(trackedFile)) {
       qDebug() << "Discovered deleted file: " << trackedFile;
       // database.removeFileMtime(trackedFile);
-      // when deleting we cant remove the fileMtime here cos its sent to the server
+      // when deleting we cant remove the fileMtime here cos its sent to the
+      // server
       deletedFiles.append(trackedFile);
     }
   }
@@ -94,15 +109,31 @@ FileClient::discoverDeletedFiles(const QString &rootDir,
   return deletedFiles;
 }
 
+void FileClient::setUsername(const QString &username) {
+  this->username = username;
+}
+void FileClient::setPassword(const QString &password) {
+  this->password = password;
+}
+
+void FileClient::setRootDir(const QString &rootDir) {
+  clientRootDir = QDir(rootDir).absolutePath();
+  QDir().mkpath(clientRootDir);
+  qDebug() << "Created client root dir at: " << clientRootDir;
+  // clientRootDir = rootDir;
+  // QDir().mkpath(clientRootDir);
+  // qDebug() << "Created client root dir at: " << clientRootDir;
+}
+
 void FileClient::clientTick() {
   if (currentlyDoingSyncOps)
     return;
   currentlyDoingSyncOps = true;
   qDebug() << "Client syncing stuff" << "\n";
-  timer.stop();
+  if (shouldUseTimer) {
+    timer.stop();
+  }
 
-  QString username = "foo";
-  QString password = "bar";
   QString rootDir = getUserRootDirectory(username);
 
   database.storeUser(username, password, rootDir);
@@ -119,12 +150,15 @@ void FileClient::clientTick() {
     msg.username = username;
     msg.password = password;
     msg.path = QDir(rootDir).relativeFilePath(path).toStdString();
+    qDebug() << "rootDir:" << rootDir;
+    qDebug() << "fullPath:" << path;
+    qDebug() << "relative:" << QDir(rootDir).relativeFilePath(path);
     msg.contents = file.readAll();
     msg.mtime = info.lastModified().toString(Qt::ISODate).toStdString();
     msg.operationType = FileOperationType::Write;
     msg.operationStatus = FileOperationStatus::DoIt;
     file.close();
-    MessageProtocol::sendMessage(&socket,msg);
+    MessageProtocol::sendMessage(socket, msg);
   }
 
   auto deletedFiles = discoverDeletedFiles(rootDir, trackedFiles);
@@ -139,11 +173,13 @@ void FileClient::clientTick() {
     msg.mtime = mtime.value().toString(Qt::ISODate).toStdString();
     msg.operationType = FileOperationType::Delete;
     msg.operationStatus = FileOperationStatus::DoIt;
-    MessageProtocol::sendMessage(&socket,msg);
+    MessageProtocol::sendMessage(socket, msg);
   }
   pendingMessages = newFiles.size() + deletedFiles.size();
   currentlyDoingSyncOps = false;
-  timer.start(3000);
+  if (shouldUseTimer) {
+    timer.start(3000);
+  }
 }
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   if (msg->success) {
