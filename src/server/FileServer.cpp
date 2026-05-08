@@ -5,42 +5,28 @@
 #include <QFile>
 void FileServer::handleConnection(QLocalSocket *socket) {
   QObject::connect(socket, &QLocalSocket::readyRead, [this, socket]() {
-    buffer.append(socket->readAll());
-    qDebug() << "Buffer size: " << buffer.size();
-    while (buffer.size() >= 4) {
-      QDataStream stream(buffer);
-      quint32 length;
-      stream >> length;
-      if (buffer.size() < 4 + (int)length) {
-        break;
-      }
-      QByteArray payload = buffer.mid(4, length);
-      buffer.remove(0, 4 + length);
-      auto *msg = Message::deserialize(payload);
-
-      if (!msg) {
-        qDebug() << "Failed to deserialize message";
-        qDebug() << "Received bytes: " << payload;
-        return;
-      }
-      qDebug() << "Dispatching message to handler.";
-      switch (msg->type()) {
-      case MessageType::ClientAuth: {
-        handleAuth(socket, static_cast<AuthMessage *>(msg));
-        break;
-      }
-      case MessageType::SyncRequest: {
-        handleSyncRequest(socket, static_cast<SyncRequestMessage *>(msg));
-        break;
-      }
-      default: {
-        handleUnrecognized(socket, msg);
-        break;
-      }
-
-        delete msg;
-      }
-    }
+    MessageProtocol::processBuffer(
+        socket, buffer, [this, socket](Message *msg) {
+          if (!msg) {
+            qDebug() << "Failed to deserialize message";
+            return;
+          }
+          qDebug() << "Dispatching message to handler.";
+          switch (msg->type()) {
+          case MessageType::ClientAuth: {
+            handleAuth(socket, static_cast<AuthMessage *>(msg));
+            break;
+          }
+          case MessageType::SyncRequest: {
+            handleSyncRequest(socket, static_cast<SyncRequestMessage *>(msg));
+            break;
+          }
+          default: {
+            handleUnrecognized(socket, msg);
+            break;
+          }
+          }
+        });
   });
 }
 

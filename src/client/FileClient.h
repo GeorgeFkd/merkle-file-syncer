@@ -26,5 +26,4 @@ private:
     QList<QString> discoverDeletedFiles(const QString& rootDir,const QSet<QString>& trackedFiles);
     bool currentlyDoingSyncOps = false;
     int pendingMessages = 0;
-    void sendMessage(const Message& msg);
 };

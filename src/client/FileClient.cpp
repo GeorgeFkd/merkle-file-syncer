@@ -10,18 +10,18 @@ void FileClient::init() {
   QObject::connect(&socket, &QLocalSocket::connected, [this]() {
     QObject::connect(&socket, &QLocalSocket::readyRead, [this]() {
       auto bytes = socket.readAll();
-      auto *msg = Message::deserialize(bytes);
+      auto msg = Message::deserialize(bytes);
       switch (msg->type()) {
       case MessageType::ClientAuth: {
-        handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
+        handleAuthResponse(static_cast<AuthResponseMessage *>(msg.get()));
         break;
       }
         case MessageType::SyncRequest: {
-          handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
+          handleSyncResponse(static_cast<SyncRequestMessage *>(msg.get()));
           break;
         }
       default: {
-        handleUnrecognized(msg);
+        handleUnrecognized(msg.get());
         break;
       }
       }
@@ -124,7 +124,7 @@ void FileClient::clientTick() {
     msg.operationType = FileOperationType::Write;
     msg.operationStatus = FileOperationStatus::DoIt;
     file.close();
-    sendMessage(msg);
+    MessageProtocol::sendMessage(&socket,msg);
   }
 
   auto deletedFiles = discoverDeletedFiles(rootDir, trackedFiles);
@@ -139,7 +139,7 @@ void FileClient::clientTick() {
     msg.mtime = mtime.value().toString(Qt::ISODate).toStdString();
     msg.operationType = FileOperationType::Delete;
     msg.operationStatus = FileOperationStatus::DoIt;
-    sendMessage(msg);
+    MessageProtocol::sendMessage(&socket,msg);
   }
   pendingMessages = newFiles.size() + deletedFiles.size();
   currentlyDoingSyncOps = false;
@@ -151,15 +151,6 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   } else {
     qDebug() << "Auth failed";
   }
-}
-
-void FileClient::sendMessage(const Message& msg) {
-  QByteArray payload = msg.serialize();
-  QByteArray frame;
-  QDataStream stream(&frame,QIODevice::WriteOnly);
-  stream << quint32(payload.size());
-  frame.append(payload);
-  socket.write(frame);
 }
 
 void FileClient::handleUnrecognized(Message *msg) {
