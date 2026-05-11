@@ -119,7 +119,7 @@ protected:
     QDir rootDir;
 };
 
-using TreeImplementations = ::testing::Types<VanillaTreeTag>;
+using TreeImplementations = ::testing::Types<VanillaTreeTag,MerkleTreeTagV1>;
 
 TYPED_TEST_SUITE(FilesystemFixture,TreeImplementations);
 
@@ -132,7 +132,7 @@ TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
     
     auto tree = this->makeTree(this->rootDir);
     tree->build();
-
+    tree->debug();
     ASSERT_EQ(tree->fileCount(), 3);
     ASSERT_TRUE(tree->contains("foo/bar.txt"));
     ASSERT_TRUE(tree->contains("foo/baz.txt"));
