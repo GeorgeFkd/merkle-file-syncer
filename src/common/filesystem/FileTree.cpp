@@ -126,16 +126,11 @@ FilesystemTree::find(const std::string &relativePath) const {
 }
 
 int FilesystemTree::fileCount() const { return countFileNodes(root.get()); }
-
-FilesystemTree FilesystemTree::buildFrom(const std::string &rootDir) {
-  FilesystemTree tree;
-  auto strDir = QString::fromStdString(rootDir);
-  QFileInfo rootPath(strDir);
-  qDebug() << "Building filesystem tree from: " << strDir << " \n";
-  assert(rootPath.isDir() && "Root directory path given is not a directory");
-  tree.root = buildNode(QString::fromStdString(rootDir));
-  tree.rootPath = strDir;
-  return tree;
+void FilesystemTree::build() {
+    QFileInfo info(rootPath);
+    qDebug() << "Building filesystem tree from: " << rootPath << "\n";
+    Q_ASSERT_X(info.isDir(), "FilesystemTree::build", "rootPath is not a directory");
+    root = buildNode(rootPath);
 }
 
 void FilesystemTree::collectAllFiles(const FileNode *node, const QString &path,
@@ -150,9 +145,19 @@ void FilesystemTree::collectAllFiles(const FileNode *node, const QString &path,
   }
 }
 
-TreeDiff FilesystemTree::diff(const FilesystemTree &other) {
+
+FilesystemTree::FilesystemTree(const std::string &rootDir) {
+  rootPath = QString::fromStdString(rootDir);
+}
+
+FileNode *FilesystemTree::getRoot() const { return root.get(); }
+
+QString FilesystemTree::getRootPath() const { return rootPath; }
+
+TreeDiff FilesystemTree::diff(const FileTree &other) const {
   TreeDiff result;
-  diffNodes(root.get(), rootPath, other.root.get(), other.rootPath, "", result);
+  diffNodes(root.get(), rootPath, other.getRoot(), other.getRootPath(), "",
+            result);
   return result;
 }
 void FilesystemTree::diffNodes(const FileNode *left,
@@ -212,7 +217,7 @@ void FilesystemTree::diffNodes(const FileNode *left,
         QFile rf(rightRootPath + "/" + fullPath);
         lf.open(QIODevice::ReadOnly);
         rf.open(QIODevice::ReadOnly);
-        //if the paths dont match but the contents do we can detect a rename
+        // if the paths dont match but the contents do we can detect a rename
         if (lf.readAll() != rf.readAll() && leftNode->path == rightNode->path) {
           qDebug() << "Found a file with different contents";
           result.modified.append(fullPath);
