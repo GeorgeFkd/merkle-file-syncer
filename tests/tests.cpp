@@ -73,6 +73,7 @@ TEST_F(SyncTest, filesAreSynced) {
     ASSERT_EQ(serverFile.readAll(), QByteArray::fromStdString(filecontents));
 }
 
+template<typename TreeImplTag>
 class FilesystemFixture : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -112,20 +113,24 @@ protected:
     }
 
     std::unique_ptr<FileTree> makeTree(const QDir &dir) {
-        return FileTreeFactory::create("vanilla",dir.path().toStdString());
+        return FileTreeFactory<TreeImplTag::type>::create(dir.path().toStdString());
     }
 
     QDir rootDir;
 };
 
-TEST_F(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
-    applyOperations(rootDir, R"(
+using TreeImplementations = ::testing::Types<VanillaTreeTag>;
+
+TYPED_TEST_SUITE(FilesystemFixture,TreeImplementations);
+
+TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
+    this->applyOperations(this->rootDir, R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
-
-    auto tree = makeTree(rootDir);
+    
+    auto tree = this->makeTree(this->rootDir);
     tree->build();
 
     ASSERT_EQ(tree->fileCount(), 3);
@@ -137,23 +142,25 @@ TEST_F(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
     ASSERT_FALSE(tree->contains("foo/new.txt"));
 }
 
-TEST_F(FilesystemFixture, addFileBehaviorWorksAsExpected) {
-    applyOperations(rootDir, R"(
+TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
+    this->applyOperations(this->rootDir, R"(
         foo/bar.txt hello Write
     )");
 
-    auto tree = makeTree(rootDir);
+    auto tree = this->makeTree(this->rootDir);
     tree->build();
 
     ASSERT_TRUE(tree->addFile("foo/new.txt", false));
     ASSERT_TRUE(tree->contains("foo/new.txt"));
-    ASSERT_FALSE(QFile::exists(rootDir.path() + "/foo/new.txt"));
+    ASSERT_FALSE(QFile::exists(this->rootDir.path() + "/foo/new.txt"));
 
     tree->addFile("foo/write_to_fs.txt", true);
     ASSERT_TRUE(tree->contains("foo/write_to_fs.txt"));
-    ASSERT_TRUE(QFile::exists(rootDir.path() + "/foo/write_to_fs.txt"));
+    ASSERT_TRUE(QFile::exists(this->rootDir.path() + "/foo/write_to_fs.txt"));
 }
 
+
+template <typename TreeImplTag>
 class FilesystemDiffFixture : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -196,28 +203,30 @@ protected:
     }
 
     std::unique_ptr<FileTree> makeTree(const QDir &dir) {
-        return FileTreeFactory::create("vanilla",dir.path().toStdString());
+        return FileTreeFactory<TreeImplTag::type>::create(dir.path().toStdString());
     }
 
     QDir leftDir;
     QDir rightDir;
 };
 
-TEST_F(FilesystemDiffFixture, diffIdentifiesChanges) {
-    applyOperations(leftDir, R"(
+TYPED_TEST_SUITE(FilesystemDiffFixture,TreeImplementations);
+
+TYPED_TEST(FilesystemDiffFixture, diffIdentifiesChanges) {
+    this->applyOperations(this->leftDir, R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
 
-    applyOperations(rightDir, R"(
+    this->applyOperations(this->rightDir, R"(
         foo/bar.txt hello Write
         foo/baz.txt changed Write
         foo/subdir/new.txt newfile Write
     )");
 
-    auto leftTree = makeTree(leftDir);
-    auto rightTree = makeTree(rightDir);
+    auto leftTree = this->makeTree(this->leftDir);
+    auto rightTree = this->makeTree(this->rightDir);
     leftTree->build();
     rightTree->build();
 
@@ -231,17 +240,17 @@ TEST_F(FilesystemDiffFixture, diffIdentifiesChanges) {
     ASSERT_EQ(diff.onlyInRight[0], "foo/subdir/new.txt");
 }
 
-TEST_F(FilesystemDiffFixture, addFileWithWriteReflectsInDiff) {
-    applyOperations(leftDir, R"(
+TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff){
+    this->applyOperations(this->leftDir, R"(
         foo/bar.txt hello Write
     )");
 
-    applyOperations(rightDir, R"(
+    this->applyOperations(this->rightDir, R"(
         foo/bar.txt hello Write
     )");
 
-    auto leftTree = makeTree(leftDir);
-    auto rightTree = makeTree(rightDir);
+    auto leftTree = this->makeTree(this->leftDir);
+    auto rightTree = this->makeTree(this->rightDir);
     leftTree->build();
     rightTree->build();
 

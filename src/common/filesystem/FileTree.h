@@ -64,18 +64,31 @@ private:
   QString rootPath;
 };
 
-class FileTreeFactory {
+enum class TreeType { Vanilla, Merkle };
+struct VanillaTreeTag {
+  static constexpr TreeType type = TreeType::Vanilla;
+  static constexpr const char *name = "vanilla";
+  static constexpr const char *version = "1.0";
+};
+
+struct MerkleTreeTag {
+  static constexpr TreeType type = TreeType::Merkle;
+  static constexpr const char *name = "merkle";
+  static constexpr const char *version = "1.0";
+};
+
+template <TreeType Type> class FileTreeFactory {
 public:
-  static std::unique_ptr<FileTree> create(const std::string &type,
-                                          const std::string &rootDir) {
-    if (type == "vanilla") {
+  static std::unique_ptr<FileTree> create(const std::string &rootDir) {
+    if constexpr (Type == TreeType::Vanilla) {
       return std::make_unique<FilesystemTree>(rootDir);
-    } else if (type == "merkle") {
+    } else if constexpr (Type == TreeType::Merkle) {
       // return std::make_unique<MerkleTree>(rootDir);
       Q_ASSERT_X(false, "FileTreeFactory::create",
                  "MerkleTree not yet implemented");
+      return nullptr;
     }
-    Q_ASSERT_X(false, "FileTreeFactory::create", "Unknown tree type");
+
     return nullptr;
   }
 };
