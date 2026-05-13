@@ -1,6 +1,7 @@
 #include "FileClient.h"
 #include "FileServer.h"
 #include "FileTree.h"
+#include "FileTreeFactory.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
@@ -150,13 +151,9 @@ TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
     auto tree = this->makeTree(this->rootDir);
     tree->build();
 
-    ASSERT_TRUE(tree->addFile("foo/new.txt", false));
+    ASSERT_TRUE(tree->addFile("foo/new.txt"));
     ASSERT_TRUE(tree->contains("foo/new.txt"));
     ASSERT_FALSE(QFile::exists(this->rootDir.path() + "/foo/new.txt"));
-
-    tree->addFile("foo/write_to_fs.txt", true);
-    ASSERT_TRUE(tree->contains("foo/write_to_fs.txt"));
-    ASSERT_TRUE(QFile::exists(this->rootDir.path() + "/foo/write_to_fs.txt"));
 }
 
 
@@ -259,7 +256,7 @@ TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff){
     ASSERT_EQ(diff.onlyInRight.size(), 0);
     ASSERT_EQ(diff.modified.size(), 0);
 
-    leftTree->addFile("foo/new.txt", true);
+    leftTree->addFile("foo/new.txt");
 
     diff = leftTree->diff(*rightTree);
     ASSERT_EQ(diff.onlyInLeft.size(), 1);
