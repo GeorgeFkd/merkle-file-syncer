@@ -4,6 +4,3 @@
 [submodule "googletest"]
 	path = googletest
 	url = https://github.com/google/googletest.git
-[submodule "minio-cpp"]
-	path = minio-cpp
-	url = https://github.com/minio/minio-cpp.git
