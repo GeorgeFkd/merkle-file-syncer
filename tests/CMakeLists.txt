@@ -8,8 +8,8 @@ target_link_libraries(
           rapidcheck
           merkle_server_lib
           merkle_client_lib
-          merkle_common
           filesutil
+          storage
           messages
           Qt6::Core
           Qt6::Network)
