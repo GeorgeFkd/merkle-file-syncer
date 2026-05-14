@@ -8,13 +8,13 @@ MerkleTree::MerkleTree(const std::string &rootDir) {
   rootPath = QString::fromStdString(rootDir);
 }
 
-void MerkleTree::build() {
-  QFileInfo info(rootPath);
-  qDebug() << "Building merkle based filesystem tree from: " << rootPath
-           << "\n";
-  Q_ASSERT_X(info.isDir(), "MerkleTree::build", "rootPath is not a directory");
-  root = buildNode(rootPath, nullptr);
-  computeHashes(root.get());
+void MerkleTree::afterBuild() {
+  if (root) {
+    computeHashes(root.get());
+    assert(verifyHashes());
+  } else {
+    qWarning() << "No root found in afterBuild()";
+  }
 }
 
 bool MerkleTree::verifyHashes() const { return verifyNode(root.get()); }
@@ -27,7 +27,6 @@ bool MerkleTree::verifyNode(const FileNode *node) const {
     }
     return true;
   }
-
 
   if (node->hash != hashChildren(node)) {
     qDebug() << "Hash mismatch for directory:" << node->path;

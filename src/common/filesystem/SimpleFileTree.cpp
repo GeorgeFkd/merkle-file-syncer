@@ -7,14 +7,6 @@ SimpleFileTree::SimpleFileTree(const std::string &rootDir) {
   rootPath = QString::fromStdString(rootDir);
 }
 
-void SimpleFileTree::build() {
-  QFileInfo info(rootPath);
-  qDebug() << "Building filesystem tree from: " << rootPath << "\n";
-  Q_ASSERT_X(info.isDir(), "SimpleFileTree::build",
-             "rootPath is not a directory");
-  root = buildNode(rootPath, nullptr);
-}
-
 void SimpleFileTree::debug() const { debugNode(root.get(), 0); }
 
 bool SimpleFileTree::deleteFile(const std::string& relativePath) {

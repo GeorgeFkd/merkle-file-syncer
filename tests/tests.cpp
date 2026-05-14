@@ -7,17 +7,39 @@
 #include "S3FileStorage.h"
 #include <QCoreApplication>
 #include <QDir>
-#include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
-#include <QLocalServer>
 #include <QTimer>
 #include <QUuid>
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
 
+// ─── Shared utilities ────────────────────────────────────────────────────────
+
+class TestOperations {
+public:
+  static void applyOperations(FileStorage *storage, const QString &user,
+                              const QString &ops) {
+    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
+      auto parts = line.trimmed().split(' ');
+      if (parts.size() < 2)
+        continue;
+      QString path = parts[0];
+      QString op = parts.last();
+      if (op == "Write") {
+        QString contents = parts.size() > 2 ? parts[1] : "";
+        storage->writeFile(user, path, contents.toUtf8());
+      } else if (op == "Delete") {
+        storage->deleteFile(user, path);
+      }
+    }
+  }
+};
+
+// ─── Storage tags ────────────────────────────────────────────────────────────
+
 struct LocalStorageTag {
-  static std::unique_ptr<FileStorage> create(const QString &rootPath) {
+  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
     auto s = std::make_unique<LocalFileStorage>();
     s->setRoot(rootPath);
     return s;
@@ -25,7 +47,7 @@ struct LocalStorageTag {
 };
 
 struct S3StorageTag {
-  static std::unique_ptr<FileStorage> create(const QString &rootPath) {
+  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
     auto s = std::make_unique<S3FileStorage>();
     s->init(S3Config{.endpoint = "localhost:9000",
                      .accessKey = "minioadmin",
@@ -35,6 +57,8 @@ struct S3StorageTag {
     return s;
   }
 };
+
+// ─── SyncTest ────────────────────────────────────────────────────────────────
 
 template <typename StorageTag> class SyncTest : public ::testing::Test {
 protected:
@@ -46,17 +70,14 @@ protected:
                          "/test_server/" + runId);
     QDir().mkpath(clientDir->path());
     QDir().mkpath(serverDir->path());
-    fileServer.setFileStorageImpl(StorageTag::create(serverDir->path()));
+    fileServer.setFileStorageImpl(StorageTag::makeStorage(serverDir->path()));
     fileServer.listenOn(serverName);
-    qDebug() << "Server listening:" << fileServer.isListening()
-             << fileServer.serverName();
   }
 
   void TearDown() override {
     if (!HasFailure()) {
       QDir(clientDir->path()).removeRecursively();
-      QDir(serverDir->path()).removeRecursively();
-      // fileServer.getStorage()->cleanup(username);
+      fileServer.getStorage()->cleanup(username);
     }
     delete clientDir;
     delete serverDir;
@@ -101,78 +122,60 @@ TYPED_TEST(SyncTest, filesAreSynced) {
   client.clientTick();
   this->waitForSync(client);
 
-  // QFile serverFile(fileServer.getUserRootDirectory(username) + "/" +
-  // filename);
   auto contents =
       this->fileServer.getStorage()->readFile(this->username, filename);
   ASSERT_TRUE(contents.has_value());
   ASSERT_EQ(contents.value(), QByteArray::fromStdString(filecontents));
-  // ASSERT_TRUE(serverFile.exists());
-  // serverFile.open(QIODevice::ReadOnly);
-  // ASSERT_EQ(serverFile.readAll(), QByteArray::fromStdString(filecontents));
 }
+
+// ─── FilesystemFixture ───────────────────────────────────────────────────────
 
 template <typename TreeImplTag>
 class FilesystemFixture : public ::testing::Test {
 protected:
   void SetUp() override {
-    rootDir = QDir(QCoreApplication::applicationDirPath() + "/test_fs/" +
-                   QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rootDir =
+        QDir(QCoreApplication::applicationDirPath() + "/test_fs/" + runId);
     QDir().mkpath(rootDir.path());
+    storage = std::make_shared<LocalFileStorage>();
+    storage->setRoot(rootDir.path());
   }
 
   void TearDown() override {
     if (!HasFailure()) {
       rootDir.removeRecursively();
+      storage->cleanup(user);
     }
   }
 
-  void applyOperations(const QDir &dst, const QString &ops) {
-    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
-      auto parts = line.trimmed().split(' ');
-      if (parts.size() < 2)
-        continue;
-      QString relativePath = parts[0];
-      QString op = parts.last();
-      QString fullPath = dst.path() + "/" + relativePath;
-      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
-      if (op == "Write") {
-        QString contents = parts.size() > 2 ? parts[1] : "";
-        QDir().mkpath(dirPath);
-        QFile f(fullPath);
-        if (!f.open(QIODevice::WriteOnly)) {
-          qDebug() << "Failed to open file:" << fullPath << f.errorString();
-          return;
-        }
-        f.write(contents.toUtf8());
-        f.close();
-      } else if (op == "Delete") {
-        QFile::remove(fullPath);
-      }
-    }
+  void applyOperations(const QString &ops) {
+    TestOperations::applyOperations(storage.get(), user, ops);
   }
 
-  std::unique_ptr<FileTree> makeTree(const QDir &dir) {
-    return FileTreeFactory<TreeImplTag::type>::create(dir.path().toStdString());
+  std::unique_ptr<FileTree> makeTree() {
+    auto tree = FileTreeFactory<TreeImplTag::type>::create(
+        storage->rootPath(user).toStdString());
+    tree->buildFromStorage(storage.get(), user);
+    return tree;
   }
 
   QDir rootDir;
+  std::shared_ptr<LocalFileStorage> storage;
+  QString user = "testuser";
 };
 
 using TreeImplementations = ::testing::Types<VanillaTreeTag, MerkleTreeTagV1>;
-
 TYPED_TEST_SUITE(FilesystemFixture, TreeImplementations);
 
 TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
-  this->applyOperations(this->rootDir, R"(
+  this->applyOperations(R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
 
-  auto tree = this->makeTree(this->rootDir);
-  tree->build();
-  tree->debug();
+  auto tree = this->makeTree();
   ASSERT_EQ(tree->fileCount(), 3);
   ASSERT_TRUE(tree->contains("foo/bar.txt"));
   ASSERT_TRUE(tree->contains("foo/baz.txt"));
@@ -183,90 +186,81 @@ TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
 }
 
 TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
-  this->applyOperations(this->rootDir, R"(
+  this->applyOperations(R"(
         foo/bar.txt hello Write
     )");
 
-  auto tree = this->makeTree(this->rootDir);
-  tree->build();
-
+  auto tree = this->makeTree();
+  this->storage->writeFile(this->user, "foo/new.txt", "new content");
   ASSERT_TRUE(tree->addFile("foo/new.txt"));
   ASSERT_TRUE(tree->contains("foo/new.txt"));
-  ASSERT_FALSE(QFile::exists(this->rootDir.path() + "/foo/new.txt"));
 }
+
+// ─── FilesystemDiffFixture ───────────────────────────────────────────────────
 
 template <typename TreeImplTag>
 class FilesystemDiffFixture : public ::testing::Test {
 protected:
   void SetUp() override {
-    leftDir = QDir(QCoreApplication::applicationDirPath() + "/test_diff_left/" +
-                   QUuid::createUuid().toString(QUuid::WithoutBraces));
-    rightDir =
-        QDir(QCoreApplication::applicationDirPath() + "/test_diff_right/" +
-             QUuid::createUuid().toString(QUuid::WithoutBraces));
-    QDir().mkpath(leftDir.path());
-    QDir().mkpath(rightDir.path());
+    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    leftStorage = std::make_shared<LocalFileStorage>();
+    leftStorage->setRoot(QCoreApplication::applicationDirPath() +
+                         "/test_diff_left/" + runId);
+    rightStorage = std::make_shared<LocalFileStorage>();
+    rightStorage->setRoot(QCoreApplication::applicationDirPath() +
+                          "/test_diff_right/" + runId);
   }
 
   void TearDown() override {
     if (!HasFailure()) {
-      leftDir.removeRecursively();
-      rightDir.removeRecursively();
+      leftStorage->cleanup(user);
+      rightStorage->cleanup(user);
     }
   }
 
-  void applyOperations(const QDir &dst, const QString &ops) {
-    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
-      auto parts = line.trimmed().split(' ');
-      if (parts.size() < 2)
-        continue;
-      QString fullPath = dst.path() + "/" + parts[0];
-      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
-      QString op = parts.last();
-      if (op == "Write") {
-        QString contents = parts.size() > 2 ? parts[1] : "";
-        QDir().mkpath(dirPath);
-        QFile f(fullPath);
-        if (!f.open(QIODevice::WriteOnly)) {
-          qDebug() << "Failed to open file:" << fullPath << f.errorString();
-          return;
-        }
-        f.write(contents.toUtf8());
-        f.close();
-      } else if (op == "Delete") {
-        QFile::remove(fullPath);
-      }
-    }
+  void applyLeft(const QString &ops) {
+    TestOperations::applyOperations(leftStorage.get(), user, ops);
   }
 
-  std::unique_ptr<FileTree> makeTree(const QDir &dir) {
-    return FileTreeFactory<TreeImplTag::type>::create(dir.path().toStdString());
+  void applyRight(const QString &ops) {
+    TestOperations::applyOperations(rightStorage.get(), user, ops);
   }
 
-  QDir leftDir;
-  QDir rightDir;
+  std::unique_ptr<FileTree> makeLeftTree() {
+    auto tree = FileTreeFactory<TreeImplTag::type>::create(
+        leftStorage->rootPath(user).toStdString());
+    tree->buildFromStorage(leftStorage.get(), user);
+    return tree;
+  }
+
+  std::unique_ptr<FileTree> makeRightTree() {
+    auto tree = FileTreeFactory<TreeImplTag::type>::create(
+        rightStorage->rootPath(user).toStdString());
+    tree->buildFromStorage(rightStorage.get(), user);
+    return tree;
+  }
+
+  std::shared_ptr<LocalFileStorage> leftStorage;
+  std::shared_ptr<LocalFileStorage> rightStorage;
+  QString user = "testuser";
 };
 
 TYPED_TEST_SUITE(FilesystemDiffFixture, TreeImplementations);
 
 TYPED_TEST(FilesystemDiffFixture, diffIdentifiesChanges) {
-  this->applyOperations(this->leftDir, R"(
+  this->applyLeft(R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
-
-  this->applyOperations(this->rightDir, R"(
+  this->applyRight(R"(
         foo/bar.txt hello Write
         foo/baz.txt changed Write
         foo/subdir/new.txt newfile Write
     )");
 
-  auto leftTree = this->makeTree(this->leftDir);
-  auto rightTree = this->makeTree(this->rightDir);
-  leftTree->build();
-  rightTree->build();
-
+  auto leftTree = this->makeLeftTree();
+  auto rightTree = this->makeRightTree();
   auto diff = leftTree->diff(*rightTree);
 
   ASSERT_EQ(diff.modified.size(), 1);
@@ -278,28 +272,18 @@ TYPED_TEST(FilesystemDiffFixture, diffIdentifiesChanges) {
 }
 
 TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff) {
-  this->applyOperations(this->leftDir, R"(
-        foo/bar.txt hello Write
-    )");
+  this->applyLeft(R"(foo/bar.txt hello Write)");
+  this->applyRight(R"(foo/bar.txt hello Write)");
 
-  this->applyOperations(this->rightDir, R"(
-        foo/bar.txt hello Write
-    )");
-
-  auto leftTree = this->makeTree(this->leftDir);
-  auto rightTree = this->makeTree(this->rightDir);
-  leftTree->build();
-  rightTree->build();
+  auto leftTree = this->makeLeftTree();
+  auto rightTree = this->makeRightTree();
 
   auto diff = leftTree->diff(*rightTree);
   ASSERT_EQ(diff.onlyInLeft.size(), 0);
   ASSERT_EQ(diff.onlyInRight.size(), 0);
   ASSERT_EQ(diff.modified.size(), 0);
-  QFile newFile(this->leftDir.path() + "/foo/new.txt");
-  newFile.open(QIODevice::WriteOnly);
-  newFile.write("new content");
-  newFile.close();
-  leftTree->addFile("foo/new.txt");
+
+  this->leftStorage->writeFile(this->user, "foo/new.txt", "new content");
   leftTree->addFile("foo/new.txt");
 
   diff = leftTree->diff(*rightTree);
@@ -308,35 +292,27 @@ TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff) {
 }
 
 TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
-  this->applyOperations(this->leftDir, R"(
+  this->applyLeft(R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
-  this->applyOperations(this->rightDir, R"(
+  this->applyRight(R"(
         foo/bar.txt hello Write
         foo/baz.txt world Write
         foo/subdir/nested.txt nested Write
     )");
-  auto leftTree = this->makeTree(this->leftDir);
-  auto rightTree = this->makeTree(this->rightDir);
-  leftTree->build();
-  rightTree->build();
 
-  auto diff = leftTree->diff(*rightTree);
-  ASSERT_EQ(diff.onlyInLeft.size(), 0);
-  ASSERT_EQ(diff.onlyInRight.size(), 0);
-  ASSERT_EQ(diff.modified.size(), 0);
+  auto leftTree = this->makeLeftTree();
+  auto rightTree = this->makeRightTree();
 
-  // delete a file
   ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt"));
   ASSERT_FALSE(leftTree->contains("foo/baz.txt"));
 
-  diff = leftTree->diff(*rightTree);
+  auto diff = leftTree->diff(*rightTree);
   ASSERT_EQ(diff.onlyInRight.size(), 1);
   ASSERT_EQ(diff.onlyInRight[0], "foo/baz.txt");
 
-  // delete a directory
   ASSERT_TRUE(leftTree->deleteFile("foo/subdir"));
   ASSERT_FALSE(leftTree->contains("foo/subdir"));
   ASSERT_FALSE(leftTree->contains("foo/subdir/nested.txt"));
@@ -345,106 +321,77 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
   ASSERT_EQ(diff.onlyInRight.size(), 2);
 }
 
+// ─── MerkleTreeFixture ───────────────────────────────────────────────────────
+
 class MerkleTreeFixture : public ::testing::Test {
 protected:
   void SetUp() override {
-    rootDir = QDir(QCoreApplication::applicationDirPath() + "/test_merkle/" +
-                   QUuid::createUuid().toString(QUuid::WithoutBraces));
-    QDir().mkpath(rootDir.path());
+    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    storage = std::make_shared<LocalFileStorage>();
+    storage->setRoot(QCoreApplication::applicationDirPath() + "/test_merkle/" +
+                     runId);
   }
 
   void TearDown() override {
     if (!HasFailure()) {
-      rootDir.removeRecursively();
+      storage->cleanup(user);
     }
   }
 
-  void applyOperations(const QDir &dst, const QString &ops) {
-    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
-      auto parts = line.trimmed().split(' ');
-      if (parts.size() < 2)
-        continue;
-      QString fullPath = dst.path() + "/" + parts[0];
-      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
-      QString op = parts.last();
-      if (op == "Write") {
-        QString contents = parts.size() > 2 ? parts[1] : "";
-        QDir().mkpath(dirPath);
-        QFile f(fullPath);
-        if (!f.open(QIODevice::WriteOnly))
-          continue;
-        f.write(contents.toUtf8());
-        f.close();
-      } else if (op == "Delete") {
-        QFile::remove(fullPath);
-      }
-    }
+  std::unique_ptr<MerkleTree> makeTree() {
+    auto tree =
+        std::make_unique<MerkleTree>(storage->rootPath(user).toStdString());
+    tree->buildFromStorage(storage.get(), user);
+    return tree;
   }
 
-  QDir rootDir;
+  std::shared_ptr<LocalFileStorage> storage;
+  QString user = "testuser";
 };
 
 TEST_F(MerkleTreeFixture, rootHashChangesOnAddFile) {
-  applyOperations(rootDir, R"(
-        foo/bar.txt hello Write
-    )");
+  storage->writeFile(user, "foo/bar.txt", "hello");
+  auto tree = makeTree();
+  ASSERT_TRUE(tree->verifyHashes());
 
-  MerkleTree tree(rootDir.path().toStdString());
-  tree.build();
-  ASSERT_TRUE(tree.verifyHashes());
+  auto hashBefore = tree->rootHash();
+  storage->writeFile(user, "foo/new.txt", "new content");
+  tree->addFile("foo/new.txt");
 
-  auto hashBefore = tree.rootHash().toHex();
-  qDebug() << "rootHash before: " << hashBefore;
-  QFile f(rootDir.path() + "/foo/new.txt");
-  f.open(QIODevice::WriteOnly);
-  f.write("new content");
-  f.close();
-  tree.addFile("foo/new.txt");
-  auto hashAfter = tree.rootHash().toHex();
-  qDebug() << "rootHash after: " << hashAfter;
-
-  ASSERT_NE(hashBefore, hashAfter);
-  ASSERT_TRUE(tree.verifyHashes());
+  ASSERT_NE(hashBefore, tree->rootHash());
+  ASSERT_TRUE(tree->verifyHashes());
 }
 
 TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteFile) {
-  applyOperations(rootDir, R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-    )");
+  storage->writeFile(user, "foo/bar.txt", "hello");
+  storage->writeFile(user, "foo/baz.txt", "world");
+  auto tree = makeTree();
+  ASSERT_TRUE(tree->verifyHashes());
 
-  MerkleTree tree(rootDir.path().toStdString());
-  tree.build();
-  ASSERT_TRUE(tree.verifyHashes());
+  auto hashBefore = tree->rootHash();
+  tree->deleteFile("foo/baz.txt");
 
-  auto hashBefore = tree.rootHash();
-  tree.deleteFile("foo/baz.txt");
-  auto hashAfter = tree.rootHash();
-
-  ASSERT_NE(hashBefore, hashAfter);
-  ASSERT_FALSE(tree.contains("foo/baz.txt"));
-  ASSERT_TRUE(tree.verifyHashes());
+  ASSERT_NE(hashBefore, tree->rootHash());
+  ASSERT_FALSE(tree->contains("foo/baz.txt"));
+  ASSERT_TRUE(tree->verifyHashes());
 }
 
 TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteDirectory) {
-  applyOperations(rootDir, R"(
-        foo/bar.txt hello Write
-        foo/subdir/nested.txt nested Write
-    )");
+  storage->writeFile(user, "foo/bar.txt", "hello");
+  storage->writeFile(user, "foo/subdir/nested.txt", "nested");
+  auto tree = makeTree();
+  ASSERT_TRUE(tree->verifyHashes());
 
-  MerkleTree tree(rootDir.path().toStdString());
-  tree.build();
-  ASSERT_TRUE(tree.verifyHashes());
+  auto hashBefore = tree->rootHash();
+  tree->deleteFile("foo/subdir");
 
-  auto hashBefore = tree.rootHash();
-  tree.deleteFile("foo/subdir");
-  auto hashAfter = tree.rootHash();
-
-  ASSERT_NE(hashBefore, hashAfter);
-  ASSERT_FALSE(tree.contains("foo/subdir"));
-  ASSERT_FALSE(tree.contains("foo/subdir/nested.txt"));
-  ASSERT_TRUE(tree.verifyHashes());
+  ASSERT_NE(hashBefore, tree->rootHash());
+  ASSERT_FALSE(tree->contains("foo/subdir"));
+  ASSERT_FALSE(tree->contains("foo/subdir/nested.txt"));
+  ASSERT_TRUE(tree->verifyHashes());
 }
+
+// ─── MerkleHasherFixture ─────────────────────────────────────────────────────
 
 struct LocalHasherTag {
   static std::shared_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -478,30 +425,25 @@ template <typename HasherTag>
 class MerkleHasherFixture : public ::testing::Test {
 protected:
   void SetUp() override {
-    rootDir =
-        QDir(QCoreApplication::applicationDirPath() + "/test_merkle_hasher/" +
-             QUuid::createUuid().toString(QUuid::WithoutBraces));
-    QDir().mkpath(rootDir.path());
-    storageImpl = HasherTag::makeStorage(rootDir.path());
+    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    storageImpl =
+        HasherTag::makeStorage(QCoreApplication::applicationDirPath() +
+                               "/test_merkle_hasher/" + runId);
     hasher = HasherTag::create(storageImpl, user);
   }
 
   void TearDown() override {
     if (!HasFailure()) {
-      rootDir.removeRecursively();
       storageImpl->cleanup(user);
     }
   }
 
-  QDir rootDir;
   std::shared_ptr<FileStorage> storageImpl;
   FileHasher hasher;
   QString user = "testuser";
 };
 
-// architecturally i cant support yet testing the S3HasherTag
 using HasherImplementations = ::testing::Types<LocalHasherTag>;
-
 TYPED_TEST_SUITE(MerkleHasherFixture, HasherImplementations);
 
 TYPED_TEST(MerkleHasherFixture, hasherWorksCorrectly) {
@@ -510,12 +452,11 @@ TYPED_TEST(MerkleHasherFixture, hasherWorksCorrectly) {
 
   auto localStorage =
       std::dynamic_pointer_cast<LocalFileStorage>(this->storageImpl);
-  QString treePath =
-      localStorage ? localStorage->rootPath(this->user) : this->rootDir.path();
+  QString treePath = localStorage->rootPath(this->user);
 
   MerkleTree tree(treePath.toStdString());
   tree.setHasher(this->hasher);
-  tree.build();
+  tree.buildFromStorage(this->storageImpl.get(), this->user);
 
   ASSERT_TRUE(tree.verifyHashes());
   ASSERT_EQ(tree.fileCount(), 2);

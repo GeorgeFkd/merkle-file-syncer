@@ -13,6 +13,7 @@ public:
         } else if constexpr (Type == TreeType::Merkle) {
             return std::make_unique<MerkleTree>(rootDir);
         }
+        assert(false && "Tried to create file tree version of a non-existing type.");
         return nullptr;
     }
 };

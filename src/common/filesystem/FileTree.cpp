@@ -4,25 +4,17 @@
 #include <QFileInfo>
 #include <QString>
 
-std::unique_ptr<FileNode> FileTree::buildNode(const QString &path,
-                                              FileNode *parent) {
-  auto node = std::make_unique<FileNode>();
-  QFileInfo info(path);
-  node->path = info.fileName();
-  node->parent = parent;
-  if (info.isDir()) {
-    node->type = FileType::Directory;
-    QDir dir(path);
-    const auto entries =
-        dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries, QDir::Name);
-    for (const auto &entry : entries) {
-      node->children.emplace_back(
-          buildNode(entry.absoluteFilePath(), node.get()));
-    }
-  } else {
-    node->type = FileType::File;
+void FileTree::buildFromStorage(const FileStorage *storage,const QString& user) {
+  root = std::make_unique<FileNode>();
+  root->type = FileType::Directory;
+  root->path = user;
+  root->parent = nullptr;
+
+  auto files = storage->listFiles(user);
+  for (const auto &file : files) {
+    addFile(file.toStdString());
   }
-  return node;
+  afterBuild();
 }
 
 std::optional<FileNode *>
