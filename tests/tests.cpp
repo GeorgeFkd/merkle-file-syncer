@@ -1,4 +1,5 @@
 #include "FileClient.h"
+#include "FileHasher.h"
 #include "FileServer.h"
 #include "FileTree.h"
 #include "FileTreeFactory.h"
@@ -294,7 +295,11 @@ TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff) {
   ASSERT_EQ(diff.onlyInLeft.size(), 0);
   ASSERT_EQ(diff.onlyInRight.size(), 0);
   ASSERT_EQ(diff.modified.size(), 0);
-
+  QFile newFile(this->leftDir.path() + "/foo/new.txt");
+  newFile.open(QIODevice::WriteOnly);
+  newFile.write("new content");
+  newFile.close();
+  leftTree->addFile("foo/new.txt");
   leftTree->addFile("foo/new.txt");
 
   diff = leftTree->diff(*rightTree);
@@ -342,39 +347,41 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
 
 class MerkleTreeFixture : public ::testing::Test {
 protected:
-    void SetUp() override {
-        rootDir = QDir(QCoreApplication::applicationDirPath() + "/test_merkle/" +
-                       QUuid::createUuid().toString(QUuid::WithoutBraces));
-        QDir().mkpath(rootDir.path());
-    }
+  void SetUp() override {
+    rootDir = QDir(QCoreApplication::applicationDirPath() + "/test_merkle/" +
+                   QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QDir().mkpath(rootDir.path());
+  }
 
-    void TearDown() override {
-        if (!HasFailure()) {
-            rootDir.removeRecursively();
-        }
+  void TearDown() override {
+    if (!HasFailure()) {
+      rootDir.removeRecursively();
     }
+  }
 
-    void applyOperations(const QDir &dst, const QString &ops) {
-        for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
-            auto parts = line.trimmed().split(' ');
-            if (parts.size() < 2) continue;
-            QString fullPath = dst.path() + "/" + parts[0];
-            QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
-            QString op = parts.last();
-            if (op == "Write") {
-                QString contents = parts.size() > 2 ? parts[1] : "";
-                QDir().mkpath(dirPath);
-                QFile f(fullPath);
-                if (!f.open(QIODevice::WriteOnly)) continue;
-                f.write(contents.toUtf8());
-                f.close();
-            } else if (op == "Delete") {
-                QFile::remove(fullPath);
-            }
-        }
+  void applyOperations(const QDir &dst, const QString &ops) {
+    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
+      auto parts = line.trimmed().split(' ');
+      if (parts.size() < 2)
+        continue;
+      QString fullPath = dst.path() + "/" + parts[0];
+      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
+      QString op = parts.last();
+      if (op == "Write") {
+        QString contents = parts.size() > 2 ? parts[1] : "";
+        QDir().mkpath(dirPath);
+        QFile f(fullPath);
+        if (!f.open(QIODevice::WriteOnly))
+          continue;
+        f.write(contents.toUtf8());
+        f.close();
+      } else if (op == "Delete") {
+        QFile::remove(fullPath);
+      }
     }
+  }
 
-    QDir rootDir;
+  QDir rootDir;
 };
 
 TEST_F(MerkleTreeFixture, rootHashChangesOnAddFile) {
@@ -386,9 +393,15 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnAddFile) {
   tree.build();
   ASSERT_TRUE(tree.verifyHashes());
 
-  auto hashBefore = tree.rootHash();
+  auto hashBefore = tree.rootHash().toHex();
+  qDebug() << "rootHash before: " << hashBefore;
+  QFile f(rootDir.path() + "/foo/new.txt");
+  f.open(QIODevice::WriteOnly);
+  f.write("new content");
+  f.close();
   tree.addFile("foo/new.txt");
-  auto hashAfter = tree.rootHash();
+  auto hashAfter = tree.rootHash().toHex();
+  qDebug() << "rootHash after: " << hashAfter;
 
   ASSERT_NE(hashBefore, hashAfter);
   ASSERT_TRUE(tree.verifyHashes());
@@ -430,5 +443,86 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteDirectory) {
   ASSERT_NE(hashBefore, hashAfter);
   ASSERT_FALSE(tree.contains("foo/subdir"));
   ASSERT_FALSE(tree.contains("foo/subdir/nested.txt"));
+  ASSERT_TRUE(tree.verifyHashes());
+}
+
+struct LocalHasherTag {
+  static std::shared_ptr<FileStorage> makeStorage(const QString &rootPath) {
+    auto s = std::make_shared<LocalFileStorage>();
+    s->setRoot(rootPath);
+    return s;
+  }
+  static FileHasher create(std::shared_ptr<FileStorage> storage,
+                           const QString &user) {
+    return FileHasher(storage.get(), user);
+  }
+};
+
+struct S3HasherTag {
+  static std::shared_ptr<FileStorage> makeStorage(const QString &rootPath) {
+    auto s = std::make_shared<S3FileStorage>();
+    s->init(S3Config{.endpoint = "localhost:9000",
+                     .accessKey = "minioadmin",
+                     .secretKey = "minioadmin",
+                     .bucket = "test-bucket",
+                     .useSSL = false});
+    return s;
+  }
+  static FileHasher create(std::shared_ptr<FileStorage> storage,
+                           const QString &user) {
+    return FileHasher(storage.get(), user);
+  }
+};
+
+template <typename HasherTag>
+class MerkleHasherFixture : public ::testing::Test {
+protected:
+  void SetUp() override {
+    rootDir =
+        QDir(QCoreApplication::applicationDirPath() + "/test_merkle_hasher/" +
+             QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QDir().mkpath(rootDir.path());
+    storageImpl = HasherTag::makeStorage(rootDir.path());
+    hasher = HasherTag::create(storageImpl, user);
+  }
+
+  void TearDown() override {
+    if (!HasFailure()) {
+      rootDir.removeRecursively();
+      storageImpl->cleanup(user);
+    }
+  }
+
+  QDir rootDir;
+  std::shared_ptr<FileStorage> storageImpl;
+  FileHasher hasher;
+  QString user = "testuser";
+};
+
+// architecturally i cant support yet testing the S3HasherTag
+using HasherImplementations = ::testing::Types<LocalHasherTag>;
+
+TYPED_TEST_SUITE(MerkleHasherFixture, HasherImplementations);
+
+TYPED_TEST(MerkleHasherFixture, hasherWorksCorrectly) {
+  this->storageImpl->writeFile(this->user, "foo/bar.txt", "hello");
+  this->storageImpl->writeFile(this->user, "foo/baz.txt", "world");
+
+  auto localStorage =
+      std::dynamic_pointer_cast<LocalFileStorage>(this->storageImpl);
+  QString treePath =
+      localStorage ? localStorage->rootPath(this->user) : this->rootDir.path();
+
+  MerkleTree tree(treePath.toStdString());
+  tree.setHasher(this->hasher);
+  tree.build();
+
+  ASSERT_TRUE(tree.verifyHashes());
+  ASSERT_EQ(tree.fileCount(), 2);
+
+  auto hashBefore = tree.rootHash();
+  this->storageImpl->writeFile(this->user, "foo/new.txt", "newcontent");
+  tree.addFile("foo/new.txt");
+  ASSERT_NE(hashBefore, tree.rootHash());
   ASSERT_TRUE(tree.verifyHashes());
 }

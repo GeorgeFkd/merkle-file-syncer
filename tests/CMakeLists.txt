@@ -9,6 +9,7 @@ target_link_libraries(
           merkle_server_lib
           merkle_client_lib
           filesutil
+          filehasher
           storage
           messages
           Qt6::Core
@@ -16,6 +17,7 @@ target_link_libraries(
 target_include_directories(
   merkle_tests
   PRIVATE ${CMAKE_SOURCE_DIR}/src/client ${CMAKE_SOURCE_DIR}/src/server
+          ${CMAKE_SOURCE_DIR}/src/common
           ${CMAKE_SOURCE_DIR}/rapidcheck/extras/gtest/include)
 
 set_target_properties(merkle_tests PROPERTIES AUTOMOC ON)

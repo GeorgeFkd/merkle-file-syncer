@@ -28,18 +28,20 @@ bool MerkleTree::verifyNode(const FileNode *node) const {
     return true;
   }
 
-  QCryptographicHash dirHash(QCryptographicHash::Sha256);
-  for (const auto &child : node->children) {
-    if (!verifyNode(child.get()))
-      return false;
-    dirHash.addData(child->hash);
-  }
 
-  if (node->hash != dirHash.result()) {
+  if (node->hash != hashChildren(node)) {
     qDebug() << "Hash mismatch for directory:" << node->path;
     return false;
   }
   return true;
+}
+
+QByteArray MerkleTree::hashChildren(const FileNode *node) const {
+  QCryptographicHash dirHash(QCryptographicHash::Sha256);
+  for (const auto &child : node->children) {
+    dirHash.addData(child->hash);
+  }
+  return dirHash.result();
 }
 
 bool MerkleTree::deleteFile(const std::string &relativePath) {
@@ -67,7 +69,7 @@ bool MerkleTree::deleteFile(const std::string &relativePath) {
     current = found;
   }
 
-  //target is either a directory or a file
+  // target is either a directory or a file
   const auto &targetName = parts.last();
   auto it = std::find_if(current->children.begin(), current->children.end(),
                          [&targetName](const std::unique_ptr<FileNode> &child) {
@@ -100,6 +102,21 @@ void MerkleTree::debugNode(const FileNode *node, int depth) const {
     debugNode(child.get(), depth + 1);
 }
 
+QByteArray MerkleTree::hashFile(const QString &relativePath) const {
+  if (hasher) {
+    return hasher(relativePath);
+  }
+  QFile f(rootPath + "/" + relativePath);
+  if (!f.open(QIODevice::ReadOnly)) {
+    qDebug() << "Failed to open file for hashing:" << relativePath
+             << f.errorString();
+    return {};
+  }
+  auto contents = f.readAll();
+  f.close();
+  return QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+}
+
 bool MerkleTree::addFile(const std::string &relativePath) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::addFile",
              "root is null — tree not built");
@@ -125,19 +142,12 @@ bool MerkleTree::addFile(const std::string &relativePath) {
       newNode->type =
           (i == parts.size() - 1) ? FileType::File : FileType::Directory;
       if (newNode->type == FileType::File) {
-        QByteArray contents;
-        QFile f(rootPath + "/" + QString::fromStdString(relativePath));
-        if (f.open(QIODevice::ReadOnly)) {
-          contents = f.readAll();
-          f.close();
-        }
-
-        newNode->hash =
-            QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+        newNode->hash = hashFile(QString::fromStdString(relativePath));
       }
       current->children.push_back(std::move(newNode));
       current = current->children.back().get();
       if (current->type == FileType::File) {
+        qDebug() << "Propagating hash of: " << current->path << ".";
         propagateHash(current);
         return true;
       }
@@ -166,6 +176,10 @@ FileNode *MerkleTree::getRoot() const { return root.get(); }
 QString MerkleTree::getRootPath() const { return rootPath; }
 QByteArray MerkleTree::rootHash() const { return root->hash; }
 
+void MerkleTree::setHasher(std::function<QByteArray(const QString &)> hasher) {
+  this->hasher = std::move(hasher);
+}
+
 QByteArray MerkleTree::readFileContents(const FileNode *node) const {
   QString fullPath = rootPath + "/" + getRelativePath(node);
   QFile file(fullPath);
@@ -182,32 +196,29 @@ QByteArray MerkleTree::readFileContents(const FileNode *node) const {
 void MerkleTree::computeHashes(FileNode *node) {
   if (node->type == FileType::File) {
     if (node->hash.isEmpty()) {
-      node->hash = QCryptographicHash::hash(readFileContents(node),
-                                            QCryptographicHash::Sha256);
+      node->hash = hashFile(getRelativePath(node));
     }
   } else {
-    QCryptographicHash dirHash(QCryptographicHash::Sha256);
     for (auto &child : node->children) {
       computeHashes(child.get());
-      dirHash.addData(child->hash);
     }
-    node->hash = dirHash.result();
+    node->hash = hashChildren(node);
   }
 }
 
 void MerkleTree::recomputeDirHash(FileNode *node) {
   Q_ASSERT_X(node->type == FileType::Directory, "recomputeDirHash",
              "node is not a directory");
-  QCryptographicHash dirHash(QCryptographicHash::Sha256);
-  for (const auto &child : node->children)
-    dirHash.addData(child->hash);
-  node->hash = dirHash.result();
+  node->hash = hashChildren(node);
 }
 
 void MerkleTree::propagateHash(FileNode *node) {
   FileNode *current = node;
   while (current->parent != nullptr) {
     recomputeDirHash(current->parent);
+    qDebug() << "Propagating to: " << current->parent->path
+             << " hash: " << current->parent->hash.toHex() << ".";
+
     current = current->parent;
   }
 }
