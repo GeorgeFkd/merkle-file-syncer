@@ -17,6 +17,44 @@ void SimpleFileTree::build() {
 
 void SimpleFileTree::debug() const { debugNode(root.get(), 0); }
 
+bool SimpleFileTree::deleteFile(const std::string& relativePath) {
+  Q_ASSERT_X(root != nullptr, "SimpleFileTree::deleteFile", "root is null");
+    Q_ASSERT_X(!relativePath.empty(), "SimpleFileTree::deleteFile", "relativePath is empty");
+
+    auto parts = QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+    FileNode *current = root.get();
+
+    for (int i = 0; i < parts.size() - 1; i++) {
+        const auto &part = parts[i];
+        FileNode *found = nullptr;
+        for (const auto &child : current->children) {
+            if (child->path == part) {
+                found = child.get();
+                break;
+            }
+        }
+        if (!found) {
+            qDebug() << "Path not found:" << QString::fromStdString(relativePath);
+            return false;
+        }
+        current = found;
+    }
+
+    const auto &filename = parts.last();
+    auto it = std::find_if(current->children.begin(), current->children.end(),
+                           [&filename](const std::unique_ptr<FileNode> &child) {
+                               return child->path == filename;
+                           });
+
+    if (it == current->children.end()) {
+        qDebug() << "File not found:" << QString::fromStdString(relativePath);
+        return false;
+    }
+
+    current->children.erase(it);
+    return true;
+}
+
 void SimpleFileTree::debugNode(const FileNode *node, int depth) const {
   if (!node)
     return;

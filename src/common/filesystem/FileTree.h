@@ -30,6 +30,7 @@ public:
     virtual ~FileTree() = default;
     bool contains(const std::string &relativePath) const ;
     virtual bool addFile(const std::string &relativePath) = 0;
+    virtual bool deleteFile(const std::string& relativePath) = 0;
     int fileCount() const ;
     virtual TreeDiff diff(const FileTree &other) const = 0;
     virtual void debug() const = 0;

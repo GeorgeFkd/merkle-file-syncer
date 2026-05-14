@@ -8,17 +8,19 @@
 class FileServer : QObject {
   Q_OBJECT
 public:
-  void handleConnection(QLocalSocket *socket);
   void listenOn(const QString &addr);
   bool isListening();
   QString serverName();
   QString getUserRootDirectory(const QString &username);
   void setFileStorageImpl(std::unique_ptr<FileStorage> storage);
-  FileStorage* getStorage();
+  FileStorage *getStorage();
+
 private:
   void handleAuth(QLocalSocket *socket, AuthMessage *msg);
   void handleUnrecognized(QLocalSocket *socket, Message *msg);
   void handleSyncRequest(QLocalSocket *socket, SyncRequestMessage *msg);
+  void handleConnection(QLocalSocket *socket);
+
   FileDb database;
   QHash<QLocalSocket *, QByteArray> buffers;
   QString serverRootDir;

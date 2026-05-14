@@ -7,6 +7,7 @@ public:
     void build() override;
     void debug() const override;
     bool addFile(const std::string &relativePath) override;
+    bool deleteFile(const std::string& relativePath) override;
     TreeDiff diff(const FileTree &other) const override;
     QString getRootPath() const override;
     FileNode *getRoot() const override;

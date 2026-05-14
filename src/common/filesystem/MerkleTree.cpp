@@ -17,6 +17,74 @@ void MerkleTree::build() {
   computeHashes(root.get());
 }
 
+bool MerkleTree::verifyHashes() const { return verifyNode(root.get()); }
+
+bool MerkleTree::verifyNode(const FileNode *node) const {
+  if (node->type == FileType::File) {
+    if (node->hash.isEmpty()) {
+      qDebug() << "Empty hash for file:" << node->path;
+      return false;
+    }
+    return true;
+  }
+
+  QCryptographicHash dirHash(QCryptographicHash::Sha256);
+  for (const auto &child : node->children) {
+    if (!verifyNode(child.get()))
+      return false;
+    dirHash.addData(child->hash);
+  }
+
+  if (node->hash != dirHash.result()) {
+    qDebug() << "Hash mismatch for directory:" << node->path;
+    return false;
+  }
+  return true;
+}
+
+bool MerkleTree::deleteFile(const std::string &relativePath) {
+  Q_ASSERT_X(root != nullptr, "MerkleTree::deleteFile", "root is null");
+  Q_ASSERT_X(!relativePath.empty(), "MerkleTree::deleteFile",
+             "relativePath is empty");
+
+  auto parts =
+      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+  FileNode *current = root.get();
+
+  for (int i = 0; i < parts.size() - 1; i++) {
+    const auto &part = parts[i];
+    FileNode *found = nullptr;
+    for (const auto &child : current->children) {
+      if (child->path == part) {
+        found = child.get();
+        break;
+      }
+    }
+    if (!found) {
+      qDebug() << "Path not found:" << QString::fromStdString(relativePath);
+      return false;
+    }
+    current = found;
+  }
+
+  //target is either a directory or a file
+  const auto &targetName = parts.last();
+  auto it = std::find_if(current->children.begin(), current->children.end(),
+                         [&targetName](const std::unique_ptr<FileNode> &child) {
+                           return child->path == targetName;
+                         });
+
+  if (it == current->children.end()) {
+    qDebug() << "File not found:" << QString::fromStdString(relativePath);
+    return false;
+  }
+
+  current->children.erase(it);
+  recomputeDirHash(current);
+  propagateHash(current);
+  return true;
+}
+
 void MerkleTree::debug() const { debugNode(root.get(), 0); }
 
 void MerkleTree::debugNode(const FileNode *node, int depth) const {

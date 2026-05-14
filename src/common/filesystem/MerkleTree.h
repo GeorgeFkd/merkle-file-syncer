@@ -7,11 +7,12 @@ public:
   void build() override;
   void debug() const override;
   bool addFile(const std::string &relativePath) override;
+  bool deleteFile(const std::string& relativePath) override;
   TreeDiff diff(const FileTree &other) const override;
   QString getRootPath() const override;
   FileNode *getRoot() const override;
   QByteArray rootHash() const;
-
+  bool verifyHashes() const;
 private:
   QByteArray readFileContents(const FileNode *node) const;
   void computeHashes(FileNode *node);
@@ -21,7 +22,7 @@ private:
                  const FileNode *right, const QString &rightRootPath,
                  const QString &path, TreeDiff &result) const;
   void debugNode(const FileNode *node, int depth) const;
-
+  bool verifyNode(const FileNode *node) const;
   std::unique_ptr<FileNode> root;
   QString rootPath;
 };
