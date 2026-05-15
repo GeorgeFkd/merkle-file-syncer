@@ -81,3 +81,10 @@ QList<QString> LocalFileStorage::listFiles(const QString &user) const {
   }
   return files;
 }
+
+std::optional<QDateTime> LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
+    QString path = fullPath(user, filename);
+    QFileInfo info(path);
+    if (!info.exists()) return std::nullopt;
+    return info.lastModified();
+}

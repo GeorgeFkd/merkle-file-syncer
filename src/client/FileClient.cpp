@@ -1,9 +1,17 @@
 #include "FileClient.h"
+#include "LocalFileStorage.h"
 #include "Messages.h"
 #include <QCoreApplication>
-#include <QDirIterator>
+#include <QDir>
 #include <qnamespace.h>
-FileClient::FileClient() { socket = new QLocalSocket(this); }
+
+FileClient::FileClient() {
+  socket = new QLocalSocket(this);
+  fileStorage = std::make_unique<LocalFileStorage>();
+}
+
+LocalFileStorage *FileClient::getStorage() { return fileStorage.get(); }
+
 void FileClient::connectToServer(const QString &serverName) {
   socket->connectToServer(serverName);
 }
@@ -44,34 +52,27 @@ FileClient::~FileClient() {
   QObject::disconnect(socket, nullptr, nullptr, nullptr);
   socket->abort();
 }
+
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
   pendingMessages--;
   if (msg->operationStatus == FileOperationStatus::Rejected) {
     qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
     if (msg->operationType == FileOperationType::Write &&
         !msg->contents.isEmpty()) {
-      // server has newer version, write it to local filesystem
-      QString fullPath = getUserRootDirectory(username) + "/" +
-                         QString::fromStdString(msg->path);
-      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
-      QDir().mkpath(dirPath);
-      QFile f(fullPath);
-      if (!f.open(QIODevice::WriteOnly)) {
-        qDebug() << "Failed to write server version to client:" << fullPath
-                 << f.errorString();
+      if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+                                  msg->contents)) {
+        qDebug() << "Failed to write server version to client";
       } else {
-        f.write(msg->contents);
-        f.close();
-        qDebug() << "Written server version to client:" << fullPath;
+        qDebug() << "Written server version to client:"
+                 << QString::fromStdString(msg->path);
       }
     } else if (msg->operationType == FileOperationType::Delete) {
-      // server rejected deletion, file still exists on server
       qDebug() << "Server rejected deletion of:"
                << QString::fromStdString(msg->path);
     }
   }
-
   if (pendingMessages == 0) {
+    currentlyDoingSyncOps = false;
     qDebug() << "All of current sync items have been synced.";
     Q_EMIT syncCompleted();
     if (shouldUseTimer) {
@@ -81,125 +82,121 @@ void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
 }
 
 QString FileClient::getUserRootDirectory(const QString &username) {
-  auto path = clientRootDir + "/" + username;
-  QDir().mkpath(path);
-  return path;
+  return fileStorage->rootPath(username);
 }
 
-QList<QString> FileClient::discoverNewFiles(const QString &rootDir) {
+QList<QString> FileClient::discoverNewFiles() {
   QList<QString> newFiles;
-  QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
-  while (it.hasNext()) {
-    QString fullPath = it.next();
-    QFileInfo info(fullPath);
-    QDateTime mtime = info.lastModified();
-    auto storedMtime = database.readMtime(fullPath);
-    if (storedMtime.has_value() && storedMtime.value() == mtime) {
-      // already stored
+  auto files = fileStorage->listFiles(username);
+  for (const auto &relativePath : files) {
+    auto storedMtime = database.readMtime(relativePath);
+    auto serverMtime = fileStorage->getMtime(username, relativePath);
+    if (!serverMtime.has_value())
       continue;
-    }
-    database.updateFileMtime(fullPath, mtime);
-    qDebug() << "Discovered new/modified file:" << fullPath
-             << "mtime:" << mtime;
-    newFiles.append(fullPath);
+    if (storedMtime.has_value() && storedMtime.value() == serverMtime.value())
+      continue;
+    database.updateFileMtime(relativePath,
+                             serverMtime.value());
+    qDebug() << "Discovered new/modified file:" << relativePath
+             << "mtime:" << serverMtime.value();
+    newFiles.append(relativePath);
   }
   return newFiles;
 }
 
 QList<QString>
-FileClient::discoverDeletedFiles(const QString &rootDir,
-                                 const QSet<QString> &trackedFiles) {
+FileClient::discoverDeletedFiles(const QSet<QString> &trackedFiles) {
+  auto fileList = fileStorage->listFiles(username);
   QList<QString> deletedFiles;
-  QSet<QString> currentFiles;
-  QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
-  while (it.hasNext()) {
-    currentFiles.insert(it.next());
-  }
+  auto currentFiles = QSet<QString>(fileList.begin(), fileList.end());
   for (const auto &trackedFile : trackedFiles) {
     if (!currentFiles.contains(trackedFile)) {
-      qDebug() << "Discovered deleted file: " << trackedFile;
-      // database.removeFileMtime(trackedFile);
-      // when deleting we cant remove the fileMtime here cos its sent to the
-      // server
+      qDebug() << "Discovered deleted file:" << trackedFile;
       deletedFiles.append(trackedFile);
     }
   }
-
   return deletedFiles;
 }
 
 void FileClient::setUsername(const QString &username) {
   this->username = username;
 }
+
 void FileClient::setPassword(const QString &password) {
   this->password = password;
 }
 
 void FileClient::setRootDir(const QString &rootDir) {
-  clientRootDir = QDir(rootDir).absolutePath();
-  QDir().mkpath(clientRootDir);
-  qDebug() << "Created client root dir at: " << clientRootDir;
+  fileStorage->setRoot(QDir(rootDir).absolutePath());
+  qDebug() << "Created client root dir at:" << rootDir;
 }
 
 void FileClient::clientTick() {
   if (currentlyDoingSyncOps)
     return;
   currentlyDoingSyncOps = true;
-  qDebug() << "Client syncing stuff" << "\n";
-  if (shouldUseTimer) {
+  qDebug() << "Client syncing stuff\n";
+  if (shouldUseTimer)
     timer.stop();
-  }
 
-  QString rootDir = getUserRootDirectory(username);
-
-  database.storeUser(username, password, rootDir);
+  database.storeUser(username, password, fileStorage->rootPath(username));
   auto trackedFiles = database.allTrackedFiles();
-  auto newFiles = discoverNewFiles(rootDir);
-  for (const auto &path : newFiles) {
-    QFileInfo info(path);
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-      qDebug() << "Failed to open file:" << path << file.errorString();
+  auto newFiles = discoverNewFiles();
+  qDebug() << "Tracked files: " << trackedFiles;
+  qDebug() << "New files: " << newFiles;
+
+  pendingMessages = 0;
+
+  for (const auto &relativePath : newFiles) {
+    auto contents = fileStorage->readFile(username, relativePath);
+    if (!contents.has_value()) {
+      qDebug() << "Failed to read file:" << relativePath;
       continue;
     }
+    auto mtime = fileStorage->getMtime(username, relativePath);
     SyncRequestMessage msg;
     msg.username = username;
     msg.password = password;
-    msg.path = QDir(rootDir).relativeFilePath(path).toStdString();
-    qDebug() << "rootDir:" << rootDir;
-    qDebug() << "fullPath:" << path;
-    qDebug() << "relative:" << QDir(rootDir).relativeFilePath(path);
-    msg.contents = file.readAll();
-    msg.mtime = info.lastModified().toString(Qt::ISODate).toStdString();
+    msg.path = relativePath.toStdString();
+    msg.contents = contents.value();
+    msg.mtime = mtime.has_value()
+                    ? mtime.value().toString(Qt::ISODate).toStdString()
+                    : "";
     msg.operationType = FileOperationType::Write;
     msg.operationStatus = FileOperationStatus::DoIt;
-    file.close();
     MessageProtocol::sendMessage(socket, msg);
+    pendingMessages++;
   }
 
-  auto deletedFiles = discoverDeletedFiles(rootDir, trackedFiles);
-  for (const auto &path : deletedFiles) {
-    auto mtime = database.readMtime(path);
-    database.removeFileMtime(path);
+  auto deletedFiles = discoverDeletedFiles(trackedFiles);
+  for (const auto &trackedPath : deletedFiles) {
+    auto mtime = database.readMtime(trackedPath);
+    database.removeFileMtime(trackedPath);
     SyncRequestMessage msg;
     msg.username = username;
     msg.password = password;
-    msg.path = QDir(rootDir).relativeFilePath(path).toStdString();
+    msg.path = trackedPath.toStdString();
     msg.contents = {};
-    msg.mtime = mtime.value().toString(Qt::ISODate).toStdString();
+    msg.mtime = mtime.has_value()
+                    ? mtime.value().toString(Qt::ISODate).toStdString()
+                    : "";
     msg.operationType = FileOperationType::Delete;
     msg.operationStatus = FileOperationStatus::DoIt;
     MessageProtocol::sendMessage(socket, msg);
+    pendingMessages++;
   }
-  pendingMessages = newFiles.size() + deletedFiles.size();
-  currentlyDoingSyncOps = false;
-  if (shouldUseTimer) {
-    timer.start(3000);
+
+  if (pendingMessages == 0) {
+    currentlyDoingSyncOps = false;
+    Q_EMIT syncCompleted();
+    if (shouldUseTimer)
+      timer.start(3000);
   }
 }
+
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   if (msg->success) {
-    qDebug() << "Auth successful, starting sync timer";
+    qDebug() << "Auth successful";
   } else {
     qDebug() << "Auth failed";
   }

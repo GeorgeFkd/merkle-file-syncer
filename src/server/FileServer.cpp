@@ -148,6 +148,7 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
 
+  //we need the username prefix to namespace records per user
   QString storageKey = msg->username + "/" + QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(storageKey);
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "FileStorage.h"
-
+#include <QDateTime>
 class LocalFileStorage : public FileStorage {
 public:
   LocalFileStorage();
@@ -14,7 +14,10 @@ public:
   QList<QString> listFiles(const QString &user) const override;
   void setRoot(const QString &path);
   QString rootPath(const QString &user) const;
-    void cleanup(const QString &user) override;
+  void cleanup(const QString &user) override;
+  std::optional<QDateTime> getMtime(const QString &user,
+                                    const QString &filename) const;
+
 private:
   QString fullPath(const QString &user, const QString &filename) const;
   QString rootDir;
