@@ -47,9 +47,28 @@ FileClient::~FileClient() {
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
   pendingMessages--;
   if (msg->operationStatus == FileOperationStatus::Rejected) {
-    // server has newer version, write it to local filesystem
-    // TODO: handle rejected case
     qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
+    if (msg->operationType == FileOperationType::Write &&
+        !msg->contents.isEmpty()) {
+      // server has newer version, write it to local filesystem
+      QString fullPath = getUserRootDirectory(username) + "/" +
+                         QString::fromStdString(msg->path);
+      QString dirPath = fullPath.left(fullPath.lastIndexOf('/'));
+      QDir().mkpath(dirPath);
+      QFile f(fullPath);
+      if (!f.open(QIODevice::WriteOnly)) {
+        qDebug() << "Failed to write server version to client:" << fullPath
+                 << f.errorString();
+      } else {
+        f.write(msg->contents);
+        f.close();
+        qDebug() << "Written server version to client:" << fullPath;
+      }
+    } else if (msg->operationType == FileOperationType::Delete) {
+      // server rejected deletion, file still exists on server
+      qDebug() << "Server rejected deletion of:"
+               << QString::fromStdString(msg->path);
+    }
   }
 
   if (pendingMessages == 0) {
@@ -120,9 +139,6 @@ void FileClient::setRootDir(const QString &rootDir) {
   clientRootDir = QDir(rootDir).absolutePath();
   QDir().mkpath(clientRootDir);
   qDebug() << "Created client root dir at: " << clientRootDir;
-  // clientRootDir = rootDir;
-  // QDir().mkpath(clientRootDir);
-  // qDebug() << "Created client root dir at: " << clientRootDir;
 }
 
 void FileClient::clientTick() {

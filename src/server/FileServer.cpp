@@ -17,6 +17,20 @@ void FileServer::listenOn(const QString &addr) {
     QLocalSocket *socket = server.nextPendingConnection();
     handleConnection(socket);
   });
+
+  QObject::connect(this, &FileServer::authMessageReceived, this,
+                   [this](QLocalSocket *socket, AuthMessage *msg) {
+                     handleAuth(socket, msg);
+                   });
+
+  QObject::connect(this, &FileServer::syncRequestReceived, this,
+                   [this](QLocalSocket *socket, SyncRequestMessage *msg) {
+                     handleSyncRequest(socket, msg);
+                   });
+  QObject::connect(this, &FileServer::unrecognizedMessageReceived, this,
+                   [this](QLocalSocket *socket, Message *msg) {
+                     handleUnrecognized(socket, msg);
+                   });
 }
 
 QString FileServer::serverName() { return server.serverName(); }
@@ -40,15 +54,15 @@ void FileServer::handleConnection(QLocalSocket *socket) {
           qDebug() << "Dispatching message to handler.";
           switch (msg->type()) {
           case MessageType::ClientAuth: {
-            handleAuth(socket, static_cast<AuthMessage *>(msg));
+            Q_EMIT handleAuth(socket, static_cast<AuthMessage *>(msg));
             break;
           }
           case MessageType::SyncRequest: {
-            handleSyncRequest(socket, static_cast<SyncRequestMessage *>(msg));
+            Q_EMIT handleSyncRequest(socket, static_cast<SyncRequestMessage *>(msg));
             break;
           }
           default: {
-            handleUnrecognized(socket, msg);
+            Q_EMIT handleUnrecognized(socket, msg);
             break;
           }
           }
@@ -56,12 +70,84 @@ void FileServer::handleConnection(QLocalSocket *socket) {
   });
 }
 
+bool FileServer::writeFile(const QString &user, const QString &file,
+                           const QByteArray &contents, const QDateTime &mtime) {
+  database.updateFileMtime(user + "/" + file, mtime);
+  return fileStorage->writeFile(user, file, contents);
+}
+
+void FileServer::handleDeleteRequest(
+    SyncRequestMessage *msg, SyncRequestMessage &response,
+    const QString &storageKey, const std::optional<QDateTime> &storedMtime) {
+  if (!storedMtime.has_value()) {
+    response.operationStatus = FileOperationStatus::Done;
+    return;
+  }
+  QDateTime clientMtime =
+      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
+  QDateTime serverMtime = storedMtime.value();
+  if (serverMtime > clientMtime) {
+    fillRejectedWithContents(response, msg->username,
+                             QString::fromStdString(msg->path), serverMtime);
+    return;
+  }
+  if (!fileStorage->deleteFile(msg->username,
+                               QString::fromStdString(msg->path))) {
+    qDebug() << "Failed to delete file from storage";
+    response.operationStatus = FileOperationStatus::Rejected;
+    return;
+  } else {
+    database.removeFileMtime(storageKey);
+    response.operationStatus = FileOperationStatus::Done;
+    return;
+  }
+}
+
+void FileServer::fillRejectedWithContents(SyncRequestMessage &response,
+                                          const QString &user,
+                                          const QString &path,
+                                          const QDateTime &serverMtime) {
+  auto contents = fileStorage->readFile(user, path);
+  if (!contents.has_value()) {
+    qDebug() << "Failed to read file from storage";
+    response.operationStatus = FileOperationStatus::Rejected;
+    return;
+  }
+  response.contents = contents.value();
+  response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
+  response.operationStatus = FileOperationStatus::Rejected;
+  return;
+}
+
+void FileServer::handleWriteRequest(
+    SyncRequestMessage *msg, SyncRequestMessage &response,
+    const QString &storageKey, const std::optional<QDateTime> &storedMtime) {
+  QDateTime clientMtime =
+      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
+
+  if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
+    fillRejectedWithContents(response, msg->username,
+                             QString::fromStdString(msg->path),
+                             storedMtime.value());
+    return;
+  }
+  database.updateFileMtime(storageKey, clientMtime);
+  if (!fileStorage->writeFile(msg->username, QString::fromStdString(msg->path),
+                              msg->contents)) {
+    qDebug() << "Failed to write file to storage";
+    response.operationStatus = FileOperationStatus::Rejected;
+    return;
+  }
+  response.operationStatus = FileOperationStatus::Done;
+  return;
+}
 
 void FileServer::handleSyncRequest(QLocalSocket *socket,
                                    SyncRequestMessage *msg) {
-  qDebug() << "Handling sync request message\n";
+  qDebug() << "Handling sync request message";
+  Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
+             "fileStorage is not set");
 
-  QString qMtime = QString::fromStdString(msg->mtime);
   QString storageKey = msg->username + "/" + QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(storageKey);
 
@@ -71,190 +157,15 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   response.operationType = msg->operationType;
 
   if (msg->operationType == FileOperationType::Delete) {
-    if (!storedMtime.has_value()) {
-      response.operationStatus = FileOperationStatus::Done;
-    } else {
-      QDateTime clientMtime = QDateTime::fromString(qMtime, Qt::ISODate);
-      QDateTime serverMtime = storedMtime.value();
-
-      if (serverMtime > clientMtime) {
-        auto contents = fileStorage->readFile(
-            msg->username, QString::fromStdString(msg->path));
-        if (!contents.has_value()) {
-          qDebug() << "Failed to read file from storage";
-          response.operationStatus = FileOperationStatus::Rejected;
-          MessageProtocol::sendMessage(socket, response);
-          return;
-        }
-        response.contents = contents.value();
-        response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
-        response.operationStatus = FileOperationStatus::Rejected;
-      } else {
-        if (!fileStorage->deleteFile(msg->username,
-                                     QString::fromStdString(msg->path))) {
-          qDebug() << "Failed to delete file from storage";
-          response.operationStatus = FileOperationStatus::Rejected;
-        } else {
-          database.removeFileMtime(storageKey);
-          response.operationStatus = FileOperationStatus::Done;
-        }
-      }
-    }
+    handleDeleteRequest(msg, response, storageKey, storedMtime);
   } else {
-    if (!storedMtime.has_value()) {
-      database.updateFileMtime(storageKey,
-                               QDateTime::fromString(qMtime, Qt::ISODate));
-      if (!fileStorage->writeFile(msg->username,
-                                  QString::fromStdString(msg->path),
-                                  msg->contents)) {
-        qDebug() << "Failed to write file to storage";
-        response.operationStatus = FileOperationStatus::Rejected;
-        MessageProtocol::sendMessage(socket, response);
-        return;
-      }
-      response.operationStatus = FileOperationStatus::Done;
-    } else {
-      QDateTime clientMtime = QDateTime::fromString(qMtime, Qt::ISODate);
-      QDateTime serverMtime = storedMtime.value();
-
-      if (serverMtime > clientMtime) {
-        auto contents = fileStorage->readFile(
-            msg->username, QString::fromStdString(msg->path));
-        if (!contents.has_value()) {
-          qDebug() << "Failed to read file from storage";
-          response.operationStatus = FileOperationStatus::Rejected;
-          MessageProtocol::sendMessage(socket, response);
-          return;
-        }
-        response.contents = contents.value();
-        response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
-        response.operationStatus = FileOperationStatus::Rejected;
-      } else {
-        database.updateFileMtime(storageKey, clientMtime);
-        if (!fileStorage->writeFile(msg->username,
-                                    QString::fromStdString(msg->path),
-                                    msg->contents)) {
-          qDebug() << "Failed to write file to storage";
-          response.operationStatus = FileOperationStatus::Rejected;
-          MessageProtocol::sendMessage(socket, response);
-          return;
-        }
-        response.operationStatus = FileOperationStatus::Done;
-      }
-    }
+    handleWriteRequest(msg, response, storageKey, storedMtime);
   }
 
   MessageProtocol::sendMessage(socket, response);
-
-  // qDebug() << "Handling sync request message\n";
-  // auto rootDir = database.readUserDirectory(msg->username, msg->password);
-  // if (!rootDir.has_value()) {
-  //   QString userDir = getUserRootDirectory(msg->username);
-  //   database.storeUser(msg->username, msg->password, userDir);
-  //   QDir().mkpath(userDir);
-  //   rootDir = userDir;
-  // }
-  //
-  // QString fullPath = rootDir.value() + "/" +
-  // QString::fromStdString(msg->path); QString qMtime =
-  // QString::fromStdString(msg->mtime); auto storedMtime =
-  // database.readMtime(fullPath);
-  //
-  // SyncRequestMessage response;
-  // response.path = msg->path;
-  // response.contents = {};
-  // response.operationType = msg->operationType;
-  //
-  // if (msg->operationType == FileOperationType::Delete) {
-  //   if (!storedMtime.has_value()) {
-  //     // file doesn't exist, nothing to delete
-  //     response.operationStatus = FileOperationStatus::Done;
-  //   } else {
-  //     QDateTime clientMtime = QDateTime::fromString(qMtime, Qt::ISODate);
-  //     QDateTime serverMtime = storedMtime.value();
-  //
-  //     if (serverMtime > clientMtime) {
-  //       // server has newer version, reject deletion
-  //       QFile file(fullPath);
-  //       if (!file.open(QIODevice::ReadOnly)) {
-  //         qDebug() << "Failed to open file for reading:" << fullPath
-  //                  << file.errorString();
-  //         response.operationStatus = FileOperationStatus::Rejected;
-  //         socket->write(response.serialize());
-  //         return;
-  //       }
-  //       response.contents = file.readAll();
-  //       file.close();
-  //       response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
-  //       response.operationStatus = FileOperationStatus::Rejected;
-  //     } else {
-  //       // client mtime is same or newer, proceed with deletion
-  //       if (!QFile::remove(fullPath)) {
-  //         qDebug() << "Failed to delete file:" << fullPath;
-  //         response.operationStatus = FileOperationStatus::Rejected;
-  //       } else {
-  //         database.removeFileMtime(fullPath);
-  //         response.operationStatus = FileOperationStatus::Done;
-  //       }
-  //     }
-  //   }
-  // } else {
-  //   // Write operation
-  //   if (!storedMtime.has_value()) {
-  //     database.updateFileMtime(fullPath,
-  //                              QDateTime::fromString(qMtime, Qt::ISODate));
-  //     QFile file(fullPath);
-  //     QFileInfo(file).dir().mkpath(".");
-  //     if (!file.open(QIODevice::WriteOnly)) {
-  //       qDebug() << "Failed to open file for writing:" << fullPath
-  //                << file.errorString();
-  //       response.operationStatus = FileOperationStatus::Rejected;
-  //       socket->write(response.serialize());
-  //       return;
-  //     }
-  //     file.write(msg->contents);
-  //     file.close();
-  //     response.operationStatus = FileOperationStatus::Done;
-  //   } else {
-  //     QDateTime clientMtime = QDateTime::fromString(qMtime, Qt::ISODate);
-  //     QDateTime serverMtime = storedMtime.value();
-  //
-  //     if (serverMtime > clientMtime) {
-  //       QFile file(fullPath);
-  //       if (!file.open(QIODevice::ReadOnly)) {
-  //         qDebug() << "Failed to open file for reading:" << fullPath
-  //                  << file.errorString();
-  //         response.operationStatus = FileOperationStatus::Rejected;
-  //         socket->write(response.serialize());
-  //         return;
-  //       }
-  //       response.contents = file.readAll();
-  //       file.close();
-  //       response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
-  //       response.operationStatus = FileOperationStatus::Rejected;
-  //     } else {
-  //       database.updateFileMtime(fullPath, clientMtime);
-  //       QFile file(fullPath);
-  //       if (!file.open(QIODevice::WriteOnly)) {
-  //         qDebug() << "Failed to open file for writing:" << fullPath
-  //                  << file.errorString();
-  //         response.operationStatus = FileOperationStatus::Rejected;
-  //         socket->write(response.serialize());
-  //         return;
-  //       }
-  //       file.write(msg->contents);
-  //       file.close();
-  //       response.operationStatus = FileOperationStatus::Done;
-  //     }
-  //   }
-  // }
-  //
-  // socket->write(response.serialize());
 }
 
-FileStorage* FileServer::getStorage() {
-  return fileStorage.get();
-}
+FileStorage *FileServer::getStorage() { return fileStorage.get(); }
 QString FileServer::getUserRootDirectory(const QString &username) {
   auto path = serverRootDir + "/" + username;
   QDir().mkpath(path);
@@ -266,7 +177,7 @@ void FileServer::handleAuth(QLocalSocket *socket, AuthMessage *msg) {
 
   AuthResponseMessage response;
   response.success = true;
-  socket->write(response.serialize());
+  MessageProtocol::sendMessage(socket, response);
 }
 
 void FileServer::handleUnrecognized(QLocalSocket *socket, Message *msg) {
