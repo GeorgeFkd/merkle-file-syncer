@@ -17,6 +17,37 @@ void MerkleTree::afterBuild() {
   }
 }
 
+QList<QPair<QString, QByteArray>> MerkleTree::getHashesAtDepth(int depth) const {
+    QList<QPair<QString, QByteArray>> result;
+    collectHashesAtDepth(root.get(), "", depth, 0, result);
+    return result;
+}
+
+void MerkleTree::collectHashesAtDepth(const FileNode *node, const QString &path,
+                                     int targetDepth, int currentDepth,
+                                     QList<QPair<QString, QByteArray>> &result) const {
+    if (!node) return;
+    if (currentDepth == targetDepth) {
+        result.append({path,node->hash});
+        return;
+    }
+    for (const auto &child : node->children) {
+        QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
+        collectHashesAtDepth(child.get(), childPath, targetDepth, currentDepth + 1, result);
+    }
+}
+
+QList<QPair<QString, QByteArray>> MerkleTree::getChildHashes(const QString &path) const {
+    auto node = find(path.toStdString());
+    if (!node.has_value()) return {};
+    QList<QPair<QString, QByteArray>> result;
+    for (const auto &child : (*node)->children) {
+        QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
+        result.append({childPath, child->hash});
+    }
+    return result;
+}
+
 bool MerkleTree::verifyHashes() const { return verifyNode(root.get()); }
 
 bool MerkleTree::verifyNode(const FileNode *node) const {
