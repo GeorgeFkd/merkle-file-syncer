@@ -3,6 +3,7 @@
 #include "Messages.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <memory>
 #include <qnamespace.h>
 
 FileClient::FileClient() {
@@ -10,15 +11,30 @@ FileClient::FileClient() {
   fileStorage = std::make_unique<LocalFileStorage>();
 }
 
+void FileClient::configure(const FileClientConfig& config) {
+  username = config.username;
+  password = config.password;
+  shouldUseTimer = !config.manualTick;
+  syncStrategy = config.syncStrategy;
+  fileStorage->setRoot(QDir(config.rootDir).absolutePath());
+  merkleTree = std::make_unique<MerkleTree>(fileStorage->rootPath(username).toStdString());
+  merkleTree->buildFromStorage(fileStorage.get(), username);
+  serverName = config.serverName;
+}
+
 LocalFileStorage *FileClient::getStorage() { return fileStorage.get(); }
 
-void FileClient::connectToServer(const QString &serverName) {
+void FileClient::connectToServer() {
   socket->connectToServer(serverName);
 }
 
-void FileClient::setManualTick() { shouldUseTimer = false; }
+void FileClient::start() {
+  setupConnections();
+  connectToServer();
+}
 
-void FileClient::init() {
+
+void FileClient::setupConnections() {
   QObject::connect(socket, &QLocalSocket::connected, this,
                    [this]() { qDebug() << "Connected event fired."; });
   QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
@@ -81,10 +97,6 @@ void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
   }
 }
 
-QString FileClient::getUserRootDirectory(const QString &username) {
-  return fileStorage->rootPath(username);
-}
-
 QList<QString> FileClient::discoverNewFiles() {
   QList<QString> newFiles;
   auto files = fileStorage->listFiles(username);
@@ -116,19 +128,6 @@ FileClient::discoverDeletedFiles(const QSet<QString> &trackedFiles) {
     }
   }
   return deletedFiles;
-}
-
-void FileClient::setUsername(const QString &username) {
-  this->username = username;
-}
-
-void FileClient::setPassword(const QString &password) {
-  this->password = password;
-}
-
-void FileClient::setRootDir(const QString &rootDir) {
-  fileStorage->setRoot(QDir(rootDir).absolutePath());
-  qDebug() << "Created client root dir at:" << rootDir;
 }
 
 void FileClient::clientTick() {

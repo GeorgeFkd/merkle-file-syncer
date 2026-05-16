@@ -34,8 +34,6 @@ struct S3StorageTag {
   }
 };
 
-// ─── SyncTest ────────────────────────────────────────────────────────────────
-
 template <typename StorageTag> class SyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
@@ -67,6 +65,17 @@ protected:
     loop.exec();
   }
 
+  std::unique_ptr<FileClient> makeClient() {
+    auto client = std::make_unique<FileClient>();
+    client->configure(FileClientConfig{.rootDir = clientDir->path(),
+                                       .username = username,
+                                       .password = "bar",
+                                       .syncStrategy = SyncStrategy::Merkle,
+                                       .manualTick = true,
+                                       .serverName = serverName});
+    return client;
+  }
+
   QDir *clientDir = nullptr;
   QDir *serverDir = nullptr;
   QString serverName = "merkle_sync_test";
@@ -78,18 +87,13 @@ using SyncTestImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
 TYPED_TEST_SUITE(SyncTest, SyncTestImplementations);
 
 TYPED_TEST(SyncTest, filesAreSynced) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
-  client.getStorage()->writeFile(this->username, "test.txt", "Hello world");
+  auto client = this->makeClient();
+  client->getStorage()->writeFile(this->username, "test.txt", "Hello world");
 
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   auto contents =
       this->fileServer.getStorage()->readFile(this->username, "test.txt");
@@ -98,24 +102,19 @@ TYPED_TEST(SyncTest, filesAreSynced) {
 }
 
 TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
-
+  auto client = this->makeClient();
   QString filename = "test.txt";
   QDateTime base = QDateTime::currentDateTime();
 
   this->fileServer.writeFile(this->username, filename, "original",
                              base.addSecs(-10));
-  client.getStorage()->writeFile(this->username, filename, "updated by client");
+  client->getStorage()->writeFile(this->username, filename,
+                                  "updated by client");
 
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   auto contents =
       this->fileServer.getStorage()->readFile(this->username, filename);
@@ -124,51 +123,40 @@ TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
 }
 
 TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
-
+  auto client = this->makeClient();
   QString filename = "test.txt";
   QDateTime base = QDateTime::currentDateTime();
 
   this->fileServer.writeFile(this->username, filename, "server newer version",
                              base.addSecs(10));
-  client.getStorage()->writeFile(this->username, filename,
-                                 "client older version");
+  client->getStorage()->writeFile(this->username, filename,
+                                  "client older version");
 
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   auto serverContents =
       this->fileServer.getStorage()->readFile(this->username, filename);
   ASSERT_TRUE(serverContents.has_value());
   ASSERT_EQ(serverContents.value(), QByteArray("server newer version"));
 
-  auto clientContents = client.getStorage()->readFile(this->username, filename);
+  auto clientContents =
+      client->getStorage()->readFile(this->username, filename);
   ASSERT_TRUE(clientContents.has_value());
   ASSERT_EQ(clientContents.value(), QByteArray("server newer version"));
 }
 
 TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
+  auto client = this->makeClient();
+  client->getStorage()->writeFile(this->username, "subdir/nested/test.txt",
+                                  "nested content");
 
-  client.getStorage()->writeFile(this->username, "subdir/nested/test.txt",
-                                 "nested content");
-
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   auto contents = this->fileServer.getStorage()->readFile(
       this->username, "subdir/nested/test.txt");
@@ -177,28 +165,22 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
 }
 
 TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
+  auto client = this->makeClient();
+  client->getStorage()->writeFile(this->username, "test.txt", "to be deleted");
 
-  client.getStorage()->writeFile(this->username, "test.txt", "to be deleted");
-
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   auto contentsBefore =
       this->fileServer.getStorage()->readFile(this->username, "test.txt");
   ASSERT_TRUE(contentsBefore.has_value());
   ASSERT_EQ(contentsBefore.value(), QByteArray("to be deleted"));
 
-  client.getStorage()->deleteFile(this->username, "test.txt");
-  client.clientTick();
-  this->waitForSync(client);
+  client->getStorage()->deleteFile(this->username, "test.txt");
+  client->clientTick();
+  this->waitForSync(*client);
 
   ASSERT_FALSE(this->fileServer.getStorage()
                    ->readFile(this->username, "test.txt")
@@ -206,20 +188,14 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
 }
 
 TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
-  FileClient client;
-  client.init();
-  client.setRootDir(this->clientDir->path());
-  client.setManualTick();
-  client.setPassword("bar");
-  client.setUsername(this->username);
+  auto client = this->makeClient();
+  client->getStorage()->writeFile(this->username, "subdir/file1.txt", "file1");
+  client->getStorage()->writeFile(this->username, "subdir/file2.txt", "file2");
 
-  client.getStorage()->writeFile(this->username, "subdir/file1.txt", "file1");
-  client.getStorage()->writeFile(this->username, "subdir/file2.txt", "file2");
-
-  client.connectToServer(this->serverName);
+  client->start();
   QCoreApplication::processEvents();
-  client.clientTick();
-  this->waitForSync(client);
+  client->clientTick();
+  this->waitForSync(*client);
 
   ASSERT_TRUE(this->fileServer.getStorage()
                   ->readFile(this->username, "subdir/file1.txt")
@@ -228,10 +204,10 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
                   ->readFile(this->username, "subdir/file2.txt")
                   .has_value());
 
-  client.getStorage()->deleteFile(this->username, "subdir/file1.txt");
-  client.getStorage()->deleteFile(this->username, "subdir/file2.txt");
-  client.clientTick();
-  this->waitForSync(client);
+  client->getStorage()->deleteFile(this->username, "subdir/file1.txt");
+  client->getStorage()->deleteFile(this->username, "subdir/file2.txt");
+  client->clientTick();
+  this->waitForSync(*client);
 
   ASSERT_FALSE(this->fileServer.getStorage()
                    ->readFile(this->username, "subdir/file1.txt")

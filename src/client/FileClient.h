@@ -1,30 +1,41 @@
 #pragma once
 
 #include "FileDb.h"
+#include "LocalFileStorage.h"
+#include "MerkleTree.h"
 #include "Messages.h"
 #include <QLocalSocket>
 #include <QString>
 #include <QTimer>
-#include "LocalFileStorage.h"
+
+enum class SyncStrategy { Naive, Merkle };
+
+struct FileClientConfig {
+  QString rootDir;
+  QString username;
+  QString password;
+  SyncStrategy syncStrategy;
+  bool manualTick = false;
+  int tickIntervalMs = 1000;
+  QString serverName;
+};
+
 class FileClient : public QObject {
   Q_OBJECT
 public:
   FileClient();
   ~FileClient();
-  void init();
-  void connectToServer(const QString &serverName);
-  void setRootDir(const QString &rootDir);
-  void setManualTick();
+  void setupConnections();
+  void configure(const FileClientConfig &config);
   void clientTick();
-  void setUsername(const QString &username);
-  void setPassword(const QString &password);
-  QString getUserRootDirectory(const QString &username);
-  LocalFileStorage* getStorage();
+  LocalFileStorage *getStorage();
+  void start();
 
 Q_SIGNALS:
   void syncCompleted();
 
 private:
+  void connectToServer();
   QLocalSocket *socket = nullptr;
   QTimer timer;
   void handleAuthResponse(AuthResponseMessage *msg);
@@ -40,4 +51,7 @@ private:
   QString username, password;
   QByteArray buffer;
   std::unique_ptr<LocalFileStorage> fileStorage;
+  SyncStrategy syncStrategy;
+  std::unique_ptr<MerkleTree> merkleTree;
+  QString serverName;
 };
