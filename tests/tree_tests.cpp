@@ -224,6 +224,46 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
   ASSERT_EQ(diff.onlyInRight.size(), 2);
 }
 
+TYPED_TEST(FilesystemDiffFixture, merkleNegotiationConverges) {
+  if constexpr (!std::is_same_v<TypeParam, MerkleTreeTagV1>)
+    return;
+
+  this->applyLeft(R"(
+        foo/bar.txt hello Write
+        foo/baz.txt world Write
+        foo/subdir/nested.txt nested Write
+        foo/subdir/deep/file.txt deep Write
+        qux/same.txt same Write
+        onlyInLeft/file.txt onlyLeft Write
+    )");
+
+  this->applyRight(R"(
+        foo/bar.txt hello Write
+        foo/baz.txt changed Write
+        foo/subdir/nested.txt nested Write
+        foo/subdir/deep/file.txt deep Write
+        qux/same.txt same Write
+        onlyInRight/file.txt onlyRight Write
+    )");
+
+  auto leftTree = std::unique_ptr<MerkleTree>(
+      static_cast<MerkleTree *>(this->makeLeftTree().release()));
+  auto rightTree = std::unique_ptr<MerkleTree>(
+      static_cast<MerkleTree *>(this->makeRightTree().release()));
+
+  ASSERT_TRUE(leftTree->verifyHashes());
+  ASSERT_TRUE(rightTree->verifyHashes());
+
+  auto result = MerkleTree::merkleNegotiateDiffs(*leftTree, *rightTree);
+
+  ASSERT_EQ(result.modified.size(), 1);
+  ASSERT_EQ(result.modified[0], "foo/baz.txt");
+  ASSERT_EQ(result.onlyInLeft.size(), 1);
+  ASSERT_EQ(result.onlyInLeft[0], "onlyInLeft/file.txt");
+  ASSERT_EQ(result.onlyInRight.size(), 1);
+  ASSERT_EQ(result.onlyInRight[0], "onlyInRight/file.txt");
+}
+
 // ─── MerkleTreeFixture ───────────────────────────────────────────────────────
 
 class MerkleTreeFixture : public ::testing::Test {

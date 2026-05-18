@@ -4,6 +4,98 @@
 #include <QFile>
 #include <QFileInfo>
 
+// (lhs - rhs) ∪ (rhs - lhs) ∪ {x ∈ lhs ∩ rhs | hash_a(x) ≠ hash_b(x)}
+TreeDiff
+MerkleTree::symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
+                              const QList<QPair<QString, QByteArray>> &rhs) {
+
+  QHash<QString, QByteArray> lhsMap;
+  for (const auto &[path, hash] : lhs)
+    lhsMap[path] = hash;
+
+  QHash<QString, QByteArray> rhsMap;
+  for (const auto &[path, hash] : rhs)
+    rhsMap[path] = hash;
+
+  TreeDiff result;
+
+  // lhs - rhs
+  for (const auto &[path, hash] : lhs) {
+    if (!rhsMap.contains(path))
+      result.onlyInLeft.append(path);
+  }
+
+  // rhs - lhs
+  for (const auto &[path, hash] : rhs) {
+    if (!lhsMap.contains(path))
+      result.onlyInRight.append(path);
+  }
+
+  // lhs ∩ rhs with different hashes
+  for (const auto &[path, hash] : lhs) {
+    if (rhsMap.contains(path) && rhsMap[path] != hash)
+      result.modified.append(path);
+  }
+
+  return result;
+}
+TreeDiff MerkleTree::merkleNegotiateDiffs(const MerkleTree &lhs,
+                                          const MerkleTree &rhs) {
+  auto leftHashes = lhs.getHashesAtDepth(0);
+  auto rightHashes = rhs.getHashesAtDepth(0);
+  auto diff = symmetricHashDiff(leftHashes, rightHashes);
+
+  TreeDiff result;
+  QList<QString> toDescend;
+
+  auto processDiff = [&](const TreeDiff &diff) {
+    for (const auto &path : diff.onlyInLeft) {
+      auto leftNode = lhs.find(path.toStdString());
+      if (leftNode.has_value() && (*leftNode)->type == FileType::File) {
+        result.onlyInLeft.append(path);
+      } else {
+        toDescend.append(path);
+      }
+    }
+    for (const auto &path : diff.onlyInRight) {
+      auto rightNode = rhs.find(path.toStdString());
+      if (rightNode.has_value() && (*rightNode)->type == FileType::File) {
+        result.onlyInRight.append(path);
+      } else {
+        toDescend.append(path);
+      }
+    }
+    for (const auto &path : diff.modified) {
+      auto leftNode = lhs.find(path.toStdString());
+      if (leftNode.has_value() && (*leftNode)->type == FileType::File) {
+        result.modified.append(path);
+      } else {
+        toDescend.append(path);
+      }
+    }
+  };
+
+  while (!diff.onlyInLeft.isEmpty() || !diff.onlyInRight.isEmpty() ||
+         !diff.modified.isEmpty()) {
+    toDescend.clear();
+    processDiff(diff);
+
+    if (toDescend.isEmpty())
+      break;
+
+    leftHashes.clear();
+    rightHashes.clear();
+    for (const auto &path : toDescend) {
+      leftHashes.append(lhs.getChildHashes(path));
+      rightHashes.append(rhs.getChildHashes(path));
+    }
+
+    diff = symmetricHashDiff(leftHashes, rightHashes);
+  }
+
+  return result;
+}
+
 MerkleTree::MerkleTree(const std::string &rootDir) {
   rootPath = QString::fromStdString(rootDir);
 }
@@ -17,35 +109,40 @@ void MerkleTree::afterBuild() {
   }
 }
 
-QList<QPair<QString, QByteArray>> MerkleTree::getHashesAtDepth(int depth) const {
-    QList<QPair<QString, QByteArray>> result;
-    collectHashesAtDepth(root.get(), "", depth, 0, result);
-    return result;
+QList<QPair<QString, QByteArray>>
+MerkleTree::getHashesAtDepth(int depth) const {
+  QList<QPair<QString, QByteArray>> result;
+  collectHashesAtDepth(root.get(), "", depth, 0, result);
+  return result;
 }
 
-void MerkleTree::collectHashesAtDepth(const FileNode *node, const QString &path,
-                                     int targetDepth, int currentDepth,
-                                     QList<QPair<QString, QByteArray>> &result) const {
-    if (!node) return;
-    if (currentDepth == targetDepth) {
-        result.append({path,node->hash});
-        return;
-    }
-    for (const auto &child : node->children) {
-        QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
-        collectHashesAtDepth(child.get(), childPath, targetDepth, currentDepth + 1, result);
-    }
+void MerkleTree::collectHashesAtDepth(
+    const FileNode *node, const QString &path, int targetDepth,
+    int currentDepth, QList<QPair<QString, QByteArray>> &result) const {
+  if (!node)
+    return;
+  if (currentDepth == targetDepth) {
+    result.append({path, node->hash});
+    return;
+  }
+  for (const auto &child : node->children) {
+    QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
+    collectHashesAtDepth(child.get(), childPath, targetDepth, currentDepth + 1,
+                         result);
+  }
 }
 
-QList<QPair<QString, QByteArray>> MerkleTree::getChildHashes(const QString &path) const {
-    auto node = find(path.toStdString());
-    if (!node.has_value()) return {};
-    QList<QPair<QString, QByteArray>> result;
-    for (const auto &child : (*node)->children) {
-        QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
-        result.append({childPath, child->hash});
-    }
-    return result;
+QList<QPair<QString, QByteArray>>
+MerkleTree::getChildHashes(const QString &path) const {
+  auto node = find(path.toStdString());
+  if (!node.has_value())
+    return {};
+  QList<QPair<QString, QByteArray>> result;
+  for (const auto &child : (*node)->children) {
+    QString childPath = path.isEmpty() ? child->path : path + "/" + child->path;
+    result.append({childPath, child->hash});
+  }
+  return result;
 }
 
 bool MerkleTree::verifyHashes() const { return verifyNode(root.get()); }

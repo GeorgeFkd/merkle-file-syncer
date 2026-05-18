@@ -1,6 +1,9 @@
 #pragma once
 #include "FileTree.h"
 
+
+
+
 class MerkleTree : public FileTree {
 public:
   explicit MerkleTree(const std::string &rootDir);
@@ -15,7 +18,10 @@ public:
   void setHasher(std::function<QByteArray(const QString &)> hasher);
   QList<QPair<QString, QByteArray>> getHashesAtDepth(int depth) const;
   QList<QPair<QString, QByteArray>> getChildHashes(const QString &path) const;
-
+  static TreeDiff symmetricHashDiff(
+    const QList<QPair<QString, QByteArray>> &lhs,
+    const QList<QPair<QString, QByteArray>> &rhs);
+  static TreeDiff merkleNegotiateDiffs(const MerkleTree &lhs, const MerkleTree &rhs);
 private:
   QByteArray hashFile(const QString &relativePath) const;
   QByteArray hashChildren(const FileNode *node) const;
@@ -29,8 +35,8 @@ private:
   void debugNode(const FileNode *node, int depth) const;
   bool verifyNode(const FileNode *node) const;
   void collectHashesAtDepth(const FileNode *node, const QString &path,
-                              int targetDepth, int currentDepth,
-                              QList<QPair<QString, QByteArray>> &result) const;
+                            int targetDepth, int currentDepth,
+                            QList<QPair<QString, QByteArray>> &result) const;
 
   QString rootPath;
   std::function<QByteArray(const QString &)> hasher;
