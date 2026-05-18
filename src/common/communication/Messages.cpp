@@ -34,27 +34,31 @@ QByteArray MerkleSyncMessage::serialize() const {
     QJsonObject obj;
     obj["type"] = "merkle_sync";
     obj["depth"] = depth;
-    QJsonArray pairs;
-    for (const auto &pair : pathsAndHashes) {
+    QJsonArray files;
+    for (const auto &merkleEntry: fileEntries) {
         QJsonObject entry;
-        entry["path"] = pair.first;
-        entry["hash"] = QString::fromUtf8(pair.second.toBase64());
-        pairs.append(entry);
+        entry["path"] = merkleEntry.path;
+        entry["hash"] = QString::fromUtf8(merkleEntry.hash.toBase64());
+        entry["mtime"] = merkleEntry.mtime.toString(Qt::ISODate);
+        files.append(entry);
     }
-    obj["pathsAndHashes"] = pairs;
+    obj["merkleEntries"] = files;
+    obj["username"] = username;
     return QJsonDocument(obj).toJson();
 }
 
 std::unique_ptr<MerkleSyncMessage> MerkleSyncMessage::deserialize(const QJsonObject &obj) {
     auto msg = std::make_unique<MerkleSyncMessage>();
     msg->depth = obj["depth"].toInt();
-    auto pairs = obj["pathsAndHashes"].toArray();
+    auto pairs = obj["merkleEntries"].toArray();
     for (const auto &entry : pairs) {
         auto e = entry.toObject();
         QString path = e["path"].toString();
         QByteArray hash = QByteArray::fromBase64(e["hash"].toString().toUtf8());
-        msg->pathsAndHashes.append({path, hash});
+        auto mtime = QDateTime::fromString(e["mtime"].toString(),Qt::ISODate);
+        msg->fileEntries.append({path, hash,mtime});
     }
+    msg->username = obj["username"].toString();
     return msg;
 }
 

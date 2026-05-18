@@ -31,10 +31,17 @@ public:
                             std::function<void(Message *)> handler);
 };
 
+struct MerkleEntry {
+  QString path;
+  QByteArray hash;
+  QDateTime mtime;
+};
+
 class MerkleSyncMessage : public Message {
 public:
   int depth;
-  QList<QPair<QString, QByteArray>> pathsAndHashes;
+  QString username;
+  QList<MerkleEntry> fileEntries;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<MerkleSyncMessage> deserialize(const QJsonObject &obj);
