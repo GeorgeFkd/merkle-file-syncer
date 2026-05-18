@@ -1,5 +1,4 @@
 #include "Messages.h"
-
 void MessageProtocol::sendMessage(QIODevice *socket, const Message &msg) {
   QByteArray payload = msg.serialize();
   QByteArray frame;
@@ -28,6 +27,37 @@ void MessageProtocol::processBuffer(QIODevice *socket, QByteArray &buffer,
     handler(msg.get());
   }
 }
+
+MessageType MerkleSyncMessage::type() const { return MessageType::MerkleSync; }
+
+QByteArray MerkleSyncMessage::serialize() const {
+    QJsonObject obj;
+    obj["type"] = "merkle_sync";
+    obj["depth"] = depth;
+    QJsonArray pairs;
+    for (const auto &pair : pathsAndHashes) {
+        QJsonObject entry;
+        entry["path"] = pair.first;
+        entry["hash"] = QString::fromUtf8(pair.second.toBase64());
+        pairs.append(entry);
+    }
+    obj["pathsAndHashes"] = pairs;
+    return QJsonDocument(obj).toJson();
+}
+
+std::unique_ptr<MerkleSyncMessage> MerkleSyncMessage::deserialize(const QJsonObject &obj) {
+    auto msg = std::make_unique<MerkleSyncMessage>();
+    msg->depth = obj["depth"].toInt();
+    auto pairs = obj["pathsAndHashes"].toArray();
+    for (const auto &entry : pairs) {
+        auto e = entry.toObject();
+        QString path = e["path"].toString();
+        QByteArray hash = QByteArray::fromBase64(e["hash"].toString().toUtf8());
+        msg->pathsAndHashes.append({path, hash});
+    }
+    return msg;
+}
+
 
 MessageType AuthMessage::type() const { return MessageType::ClientAuth; }
 
@@ -60,6 +90,8 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return AuthResponseMessage::deserialize(obj);
   if (type == "sync_request")
     return SyncRequestMessage::deserialize(obj);
+  if (type == "merkle_sync")
+    return MerkleSyncMessage::deserialize(obj);
 
   return nullptr;
 }
@@ -83,11 +115,14 @@ QByteArray SyncRequestMessage::serialize() const {
   case FileOperationStatus::Done:
     obj["opstatus"] = "done";
     break;
-  case FileOperationStatus::Rejected:
-    obj["opstatus"] = "rejected";
+  case FileOperationStatus::Error:
+    obj["opstatus"] = "error";
     break;
   case FileOperationStatus::Pending:
     obj["opstatus"] = "pending";
+    break;
+  case FileOperationStatus::ServerHasNewer:
+    obj["opstatus"] = "serverhasnewer";
     break;
   }
 
@@ -135,10 +170,12 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
     msg->operationStatus = FileOperationStatus::DoIt;
   else if (obj["opstatus"].toString() == "done")
     msg->operationStatus = FileOperationStatus::Done;
-  else if (obj["opstatus"].toString() == "rejected")
-    msg->operationStatus = FileOperationStatus::Rejected;
+  else if (obj["opstatus"].toString() == "error")
+    msg->operationStatus = FileOperationStatus::Error;
   else if (obj["opstatus"].toString() == "pending")
     msg->operationStatus = FileOperationStatus::Pending;
+  else if (obj["opstatus"].toString() == "serverhasnewer")
+    msg->operationStatus = FileOperationStatus::ServerHasNewer;
 
   return msg;
 }

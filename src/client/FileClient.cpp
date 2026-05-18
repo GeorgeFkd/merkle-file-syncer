@@ -11,28 +11,29 @@ FileClient::FileClient() {
   fileStorage = std::make_unique<LocalFileStorage>();
 }
 
-void FileClient::configure(const FileClientConfig& config) {
+void FileClient::configure(const FileClientConfig &config) {
   username = config.username;
   password = config.password;
   shouldUseTimer = !config.manualTick;
   syncStrategy = config.syncStrategy;
   fileStorage->setRoot(QDir(config.rootDir).absolutePath());
-  merkleTree = std::make_unique<MerkleTree>(fileStorage->rootPath(username).toStdString());
+  merkleTree = std::make_unique<MerkleTree>(
+      fileStorage->rootPath(username).toStdString());
+  merkleTree->setHasher(FileHasher(fileStorage.get(), username));
   merkleTree->buildFromStorage(fileStorage.get(), username);
   serverName = config.serverName;
+  tickIntervalMs = config.tickIntervalMs;
+  database.storeUser(username, password, fileStorage->rootPath(username));
 }
 
 LocalFileStorage *FileClient::getStorage() { return fileStorage.get(); }
 
-void FileClient::connectToServer() {
-  socket->connectToServer(serverName);
-}
+void FileClient::connectToServer() { socket->connectToServer(serverName); }
 
 void FileClient::start() {
   setupConnections();
   connectToServer();
 }
-
 
 void FileClient::setupConnections() {
   QObject::connect(socket, &QLocalSocket::connected, this,
@@ -59,7 +60,7 @@ void FileClient::setupConnections() {
   if (shouldUseTimer) {
     QObject::connect(&timer, &QTimer::timeout, this,
                      [this]() { clientTick(); });
-    timer.start(3000);
+    timer.start(tickIntervalMs);
   }
 }
 
@@ -71,81 +72,104 @@ FileClient::~FileClient() {
 
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
   pendingMessages--;
-  if (msg->operationStatus == FileOperationStatus::Rejected) {
-    qDebug() << "Sync rejected for:" << QString::fromStdString(msg->path);
-    if (msg->operationType == FileOperationType::Write &&
-        !msg->contents.isEmpty()) {
-      if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
-                                  msg->contents)) {
-        qDebug() << "Failed to write server version to client";
-      } else {
-        qDebug() << "Written server version to client:"
-                 << QString::fromStdString(msg->path);
-      }
-    } else if (msg->operationType == FileOperationType::Delete) {
-      qDebug() << "Server rejected deletion of:"
-               << QString::fromStdString(msg->path);
-    }
+  if (msg->operationType == FileOperationType::Write) {
+    handleWriteResponse(msg);
+  } else if (msg->operationType == FileOperationType::Delete) {
+    handleDeleteResponse(msg);
   }
+  checkSyncCompletionAndUnlock();
+}
+
+void FileClient::checkSyncCompletionAndUnlock() {
   if (pendingMessages == 0) {
     currentlyDoingSyncOps = false;
     qDebug() << "All of current sync items have been synced.";
     Q_EMIT syncCompleted();
     if (shouldUseTimer) {
-      timer.start(3000);
+      timer.start(tickIntervalMs);
+    }
+  }
+}
+void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
+  if (msg->operationStatus == FileOperationStatus::Done)
+    return;
+  if (msg->operationStatus == FileOperationStatus::ServerHasNewer) {
+    qDebug() << "Server has newer version of:"
+             << QString::fromStdString(msg->path);
+    if (msg->contents.isEmpty())
+      return;
+    if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+                                msg->contents)) {
+      qDebug() << "Failed to write server version to client";
+      return;
+    }
+    qDebug() << "Written server version to client:"
+             << QString::fromStdString(msg->path);
+    if (merkleTree) {
+      merkleTree->addFile(msg->path);
+    }
+  }
+}
+
+void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
+  if (msg->operationStatus == FileOperationStatus::Done) {
+    qDebug() << "For file: " << msg->path << " received status: " << "Done";
+  }
+  if (msg->operationStatus == FileOperationStatus::ServerHasNewer) {
+    qDebug() << "Server rejected deletion, restoring:"
+             << QString::fromStdString(msg->path);
+    if (msg->contents.isEmpty())
+      return;
+    if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+                                msg->contents)) {
+      qDebug() << "Failed to restore file from server";
+      return;
+    }
+    if (merkleTree) {
+      merkleTree->addFile(msg->path);
     }
   }
 }
 
 QList<QString> FileClient::discoverNewFiles() {
-  QList<QString> newFiles;
-  auto files = fileStorage->listFiles(username);
-  for (const auto &relativePath : files) {
-    auto storedMtime = database.readMtime(relativePath);
-    auto serverMtime = fileStorage->getMtime(username, relativePath);
-    if (!serverMtime.has_value())
-      continue;
-    if (storedMtime.has_value() && storedMtime.value() == serverMtime.value())
-      continue;
-    database.updateFileMtime(relativePath,
-                             serverMtime.value());
-    qDebug() << "Discovered new/modified file:" << relativePath
-             << "mtime:" << serverMtime.value();
-    newFiles.append(relativePath);
+  if (syncStrategy == SyncStrategy::Naive) {
+    QList<QString> newFiles;
+    auto files = fileStorage->listFiles(username);
+    for (const auto &relativePath : files) {
+      auto storedMtime = database.readMtime(relativePath);
+      auto serverMtime = fileStorage->getMtime(username, relativePath);
+      if (!serverMtime.has_value())
+        continue;
+      if (storedMtime.has_value() && storedMtime.value() == serverMtime.value())
+        continue;
+      database.updateFileMtime(relativePath, serverMtime.value());
+      qDebug() << "Discovered new/modified file:" << relativePath
+               << "mtime:" << serverMtime.value();
+      newFiles.append(relativePath);
+    }
+    return newFiles;
   }
-  return newFiles;
+  return {};
 }
 
 QList<QString>
 FileClient::discoverDeletedFiles(const QSet<QString> &trackedFiles) {
-  auto fileList = fileStorage->listFiles(username);
-  QList<QString> deletedFiles;
-  auto currentFiles = QSet<QString>(fileList.begin(), fileList.end());
-  for (const auto &trackedFile : trackedFiles) {
-    if (!currentFiles.contains(trackedFile)) {
-      qDebug() << "Discovered deleted file:" << trackedFile;
-      deletedFiles.append(trackedFile);
+  if (syncStrategy == SyncStrategy::Naive) {
+    auto fileList = fileStorage->listFiles(username);
+    QList<QString> deletedFiles;
+    auto currentFiles = QSet<QString>(fileList.begin(), fileList.end());
+    for (const auto &trackedFile : trackedFiles) {
+      if (!currentFiles.contains(trackedFile)) {
+        qDebug() << "Discovered deleted file:" << trackedFile;
+        deletedFiles.append(trackedFile);
+      }
     }
+    return deletedFiles;
   }
-  return deletedFiles;
+  return {};
 }
 
-void FileClient::clientTick() {
-  if (currentlyDoingSyncOps)
-    return;
-  currentlyDoingSyncOps = true;
-  qDebug() << "Client syncing stuff\n";
-  if (shouldUseTimer)
-    timer.stop();
-
-  database.storeUser(username, password, fileStorage->rootPath(username));
-  auto trackedFiles = database.allTrackedFiles();
-  auto newFiles = discoverNewFiles();
-  qDebug() << "Tracked files: " << trackedFiles;
-  qDebug() << "New files: " << newFiles;
-
-  pendingMessages = 0;
-
+void FileClient::sendNewFiles(const QList<QString> &newFiles) {
   for (const auto &relativePath : newFiles) {
     auto contents = fileStorage->readFile(username, relativePath);
     if (!contents.has_value()) {
@@ -166,8 +190,9 @@ void FileClient::clientTick() {
     MessageProtocol::sendMessage(socket, msg);
     pendingMessages++;
   }
+}
 
-  auto deletedFiles = discoverDeletedFiles(trackedFiles);
+void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
   for (const auto &trackedPath : deletedFiles) {
     auto mtime = database.readMtime(trackedPath);
     database.removeFileMtime(trackedPath);
@@ -184,13 +209,30 @@ void FileClient::clientTick() {
     MessageProtocol::sendMessage(socket, msg);
     pendingMessages++;
   }
+}
 
-  if (pendingMessages == 0) {
-    currentlyDoingSyncOps = false;
-    Q_EMIT syncCompleted();
-    if (shouldUseTimer)
-      timer.start(3000);
-  }
+void FileClient::clientTick() {
+  if (currentlyDoingSyncOps)
+    return;
+  currentlyDoingSyncOps = true;
+  qDebug() << "Client syncing stuff\n";
+  if (shouldUseTimer)
+    timer.stop();
+
+  
+  auto trackedFiles = database.allTrackedFiles();
+  auto newFiles = discoverNewFiles();
+  auto deletedFiles = discoverDeletedFiles(trackedFiles);
+
+  qDebug() << "Tracked files: " << trackedFiles;
+  qDebug() << "New files: " << newFiles;
+
+  pendingMessages = 0;
+
+  sendNewFiles(newFiles);
+  sendDeletedFiles(deletedFiles);
+
+  checkSyncCompletionAndUnlock();
 }
 
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {

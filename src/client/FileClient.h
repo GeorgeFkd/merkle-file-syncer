@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FileDb.h"
+#include "FileHasher.h"
 #include "LocalFileStorage.h"
 #include "MerkleTree.h"
 #include "Messages.h"
@@ -16,7 +17,7 @@ struct FileClientConfig {
   QString password;
   SyncStrategy syncStrategy;
   bool manualTick = false;
-  int tickIntervalMs = 1000;
+  unsigned int tickIntervalMs = 1000;
   QString serverName;
 };
 
@@ -36,21 +37,28 @@ Q_SIGNALS:
 
 private:
   void connectToServer();
+  void sendNewFiles(const QList<QString> &files);
+  void sendDeletedFiles(const QList<QString> &files);
   QLocalSocket *socket = nullptr;
+  
   QTimer timer;
+  unsigned int tickIntervalMs;
+  bool shouldUseTimer = true;
+
   void handleAuthResponse(AuthResponseMessage *msg);
   void handleSyncResponse(SyncRequestMessage *msg);
+  void handleWriteResponse(SyncRequestMessage *msg);
+  void handleDeleteResponse(SyncRequestMessage *msg);
   void handleUnrecognized(Message *msg);
-  FileDb database;
   QList<QString> discoverNewFiles();
   QList<QString> discoverDeletedFiles(const QSet<QString> &trackedFiles);
+  void checkSyncCompletionAndUnlock();
   bool currentlyDoingSyncOps = false;
   int pendingMessages = 0;
-  // QString clientRootDir;
-  bool shouldUseTimer = true;
   QString username, password;
   QByteArray buffer;
   std::unique_ptr<LocalFileStorage> fileStorage;
+  FileDb database;
   SyncStrategy syncStrategy;
   std::unique_ptr<MerkleTree> merkleTree;
   QString serverName;

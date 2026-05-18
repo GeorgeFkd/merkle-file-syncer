@@ -5,17 +5,22 @@
 #include <QFile>
 #include <qnamespace.h>
 
-void FileServer::setFileStorageImpl(std::unique_ptr<FileStorage> storage) {
-  this->fileStorage = std::move(storage);
+void FileServer::configure(FileServerConfig config) {
+  this->fileStorage = std::move(config.storage);
+  serverUrl = std::move(config.serverName);
 }
 
-void FileServer::listenOn(const QString &addr) {
-  QLocalServer::removeServer(addr);
-  server.listen(addr);
+void FileServer::start() {
+  QLocalServer::removeServer(serverUrl);
+  server.listen(serverUrl);
+  setupConnections();
+}
+
+void FileServer::setupConnections() {
   QObject::connect(&server, &QLocalServer::newConnection, [&]() {
     qDebug() << "New connection received";
     QLocalSocket *socket = server.nextPendingConnection();
-    handleConnection(socket);
+    setupNewSocketConnection(socket);
   });
 
   QObject::connect(this, &FileServer::authMessageReceived, this,
@@ -37,7 +42,7 @@ QString FileServer::serverName() { return server.serverName(); }
 
 bool FileServer::isListening() { return server.isListening(); }
 
-void FileServer::handleConnection(QLocalSocket *socket) {
+void FileServer::setupNewSocketConnection(QLocalSocket *socket) {
   qDebug() << "Handling new connection.";
   QObject::connect(socket, &QLocalSocket::disconnected, socket,
                    &QLocalSocket::deleteLater);
@@ -58,7 +63,8 @@ void FileServer::handleConnection(QLocalSocket *socket) {
             break;
           }
           case MessageType::SyncRequest: {
-            Q_EMIT handleSyncRequest(socket, static_cast<SyncRequestMessage *>(msg));
+            Q_EMIT handleSyncRequest(socket,
+                                     static_cast<SyncRequestMessage *>(msg));
             break;
           }
           default: {
@@ -70,6 +76,7 @@ void FileServer::handleConnection(QLocalSocket *socket) {
   });
 }
 
+//this method is only used in testing, should not be used for the server logic
 bool FileServer::writeFile(const QString &user, const QString &file,
                            const QByteArray &contents, const QDateTime &mtime) {
   database.updateFileMtime(user + "/" + file, mtime);
@@ -86,15 +93,18 @@ void FileServer::handleDeleteRequest(
   QDateTime clientMtime =
       QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
   QDateTime serverMtime = storedMtime.value();
-  if (serverMtime > clientMtime) {
-    fillRejectedWithContents(response, msg->username,
-                             QString::fromStdString(msg->path), serverMtime);
+  bool serverMtimeIsAhead = serverMtime > clientMtime;
+  if (serverMtimeIsAhead) {
+    trySendNewerFile(response, msg->username, QString::fromStdString(msg->path),
+                     serverMtime);
     return;
   }
+
+  assert(!serverMtimeIsAhead);
   if (!fileStorage->deleteFile(msg->username,
                                QString::fromStdString(msg->path))) {
     qDebug() << "Failed to delete file from storage";
-    response.operationStatus = FileOperationStatus::Rejected;
+    response.operationStatus = FileOperationStatus::Error;
     return;
   } else {
     database.removeFileMtime(storageKey);
@@ -103,19 +113,18 @@ void FileServer::handleDeleteRequest(
   }
 }
 
-void FileServer::fillRejectedWithContents(SyncRequestMessage &response,
-                                          const QString &user,
-                                          const QString &path,
-                                          const QDateTime &serverMtime) {
+void FileServer::trySendNewerFile(SyncRequestMessage &response,
+                                  const QString &user, const QString &path,
+                                  const QDateTime &serverMtime) {
   auto contents = fileStorage->readFile(user, path);
   if (!contents.has_value()) {
     qDebug() << "Failed to read file from storage";
-    response.operationStatus = FileOperationStatus::Rejected;
+    response.operationStatus = FileOperationStatus::Error;
     return;
   }
   response.contents = contents.value();
   response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
-  response.operationStatus = FileOperationStatus::Rejected;
+  response.operationStatus = FileOperationStatus::ServerHasNewer;
   return;
 }
 
@@ -126,18 +135,19 @@ void FileServer::handleWriteRequest(
       QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
 
   if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
-    fillRejectedWithContents(response, msg->username,
-                             QString::fromStdString(msg->path),
-                             storedMtime.value());
+    trySendNewerFile(response, msg->username, QString::fromStdString(msg->path),
+                     storedMtime.value());
     return;
   }
-  database.updateFileMtime(storageKey, clientMtime);
+
   if (!fileStorage->writeFile(msg->username, QString::fromStdString(msg->path),
                               msg->contents)) {
     qDebug() << "Failed to write file to storage";
-    response.operationStatus = FileOperationStatus::Rejected;
+    response.operationStatus = FileOperationStatus::Error;
     return;
   }
+
+  database.updateFileMtime(storageKey, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return;
 }
@@ -148,7 +158,7 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
 
-  //we need the username prefix to namespace records per user
+  // we need the username prefix to namespace records per user
   QString storageKey = msg->username + "/" + QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(storageKey);
 
@@ -159,7 +169,7 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
 
   if (msg->operationType == FileOperationType::Delete) {
     handleDeleteRequest(msg, response, storageKey, storedMtime);
-  } else {
+  } else if (msg->operationType == FileOperationType::Write) {
     handleWriteRequest(msg, response, storageKey, storedMtime);
   }
 
@@ -167,11 +177,6 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
 }
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }
-QString FileServer::getUserRootDirectory(const QString &username) {
-  auto path = serverRootDir + "/" + username;
-  QDir().mkpath(path);
-  return path;
-}
 
 void FileServer::handleAuth(QLocalSocket *socket, AuthMessage *msg) {
   qDebug() << "User: " << msg->username << "Password: " << msg->password;

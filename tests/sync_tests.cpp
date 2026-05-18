@@ -44,8 +44,8 @@ protected:
                          "/test_server/" + runId);
     QDir().mkpath(clientDir->path());
     QDir().mkpath(serverDir->path());
-    fileServer.setFileStorageImpl(StorageTag::makeStorage(serverDir->path()));
-    fileServer.listenOn(serverName);
+    fileServer.configure(FileServerConfig{.serverName = serverName,.storage=StorageTag::makeStorage(serverDir->path())});
+    fileServer.start();
   }
 
   void TearDown() override {
@@ -70,7 +70,7 @@ protected:
     client->configure(FileClientConfig{.rootDir = clientDir->path(),
                                        .username = username,
                                        .password = "bar",
-                                       .syncStrategy = SyncStrategy::Merkle,
+                                       .syncStrategy = SyncStrategy::Naive,
                                        .manualTick = true,
                                        .serverName = serverName});
     return client;

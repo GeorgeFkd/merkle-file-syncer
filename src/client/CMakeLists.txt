@@ -3,9 +3,11 @@ target_include_directories(
   merkle_client_lib
   PUBLIC ${CMAKE_SOURCE_DIR}/src/common/communication
          ${CMAKE_SOURCE_DIR}/src/common/storage
-         ${CMAKE_SOURCE_DIR}/src/common/filesystem)
-target_link_libraries(merkle_client_lib PRIVATE messages filesutil storage
-                                                Qt6::Core Qt6::Network)
+         ${CMAKE_SOURCE_DIR}/src/common/filesystem
+         ${CMAKE_SOURCE_DIR}/src/common)
+target_link_libraries(
+  merkle_client_lib PRIVATE messages filesutil storage filehasher Qt6::Core
+                            Qt6::Network)
 qt_add_executable(merkle_client main.cpp)
 
 target_link_libraries(merkle_client PRIVATE Qt6::Core Qt6::Network
