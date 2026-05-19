@@ -7,7 +7,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-
+#include <QSet>
 enum class FileType { File, Directory };
 
 class TreeDiff {

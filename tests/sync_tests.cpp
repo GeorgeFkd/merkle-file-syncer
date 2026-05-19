@@ -33,8 +33,29 @@ struct S3StorageTag {
     return s;
   }
 };
+struct LocalNaiveTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+};
 
-template <typename StorageTag> class SyncTest : public ::testing::Test {
+struct LocalMerkleTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+};
+
+struct S3NaiveTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+};
+
+struct S3MerkleTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+};
+
+using SyncTestImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
+
+template <typename Tag> class SyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
     QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -44,7 +65,9 @@ protected:
                          "/test_server/" + runId);
     QDir().mkpath(clientDir->path());
     QDir().mkpath(serverDir->path());
-    fileServer.configure(FileServerConfig{.serverName = serverName,.storage=StorageTag::makeStorage(serverDir->path())});
+    fileServer.configure(
+        FileServerConfig{.serverName = serverName,
+                         .storage = Tag::makeStorage(serverDir->path())});
     fileServer.start();
   }
 
@@ -83,7 +106,6 @@ protected:
   QString username = "foo";
 };
 
-using SyncTestImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
 TYPED_TEST_SUITE(SyncTest, SyncTestImplementations);
 
 TYPED_TEST(SyncTest, filesAreSynced) {
@@ -215,4 +237,105 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   ASSERT_FALSE(this->fileServer.getStorage()
                    ->readFile(this->username, "subdir/file2.txt")
                    .has_value());
+}
+
+template <typename Tag> class MerkleSyncTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    clientDir = new QDir(QCoreApplication::applicationDirPath() +
+                         "/test_merkle_sync_client/" + runId);
+    serverDir = new QDir(QCoreApplication::applicationDirPath() +
+                         "/test_merkle_sync_server/" + runId);
+    QDir().mkpath(clientDir->path());
+    QDir().mkpath(serverDir->path());
+    fileServer.configure(FileServerConfig{
+        .serverName = serverName,
+        .storage = Tag::Storage::makeStorage(serverDir->path())});
+    fileServer.start();
+  }
+
+  void TearDown() override {
+    if (!HasFailure()) {
+      QDir(clientDir->path()).removeRecursively();
+      fileServer.getStorage()->cleanup(username);
+    }
+    delete clientDir;
+    delete serverDir;
+  }
+
+  void waitForNegotiation(FileClient &client) {
+    QEventLoop loop;
+    QObject::connect(&client, &FileClient::negotiationCompleted, &loop,
+                     &QEventLoop::quit);
+    QTimer::singleShot(200, &loop, &QEventLoop::quit);
+    loop.exec();
+  }
+
+  std::unique_ptr<FileClient> makeClient() {
+    auto client = std::make_unique<FileClient>();
+    client->configure(FileClientConfig{.rootDir = clientDir->path(),
+                                       .username = username,
+                                       .password = "bar",
+                                       .syncStrategy = SyncStrategy::Merkle,
+                                       .manualTick = true,
+                                       .serverName = serverName});
+    return client;
+  }
+
+  QDir *clientDir = nullptr;
+  QDir *serverDir = nullptr;
+  QString serverName = "merkle_sync_test";
+  FileServer fileServer;
+  QString username = "foo";
+};
+
+using MerkleSyncTestImplementations =
+    ::testing::Types<LocalMerkleTag, S3MerkleTag>;
+TYPED_TEST_SUITE(MerkleSyncTest, MerkleSyncTestImplementations);
+
+TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
+  auto client = this->makeClient();
+
+  client->writeFile("foo/bar.txt", "hello");
+  client->writeFile("foo/baz.txt", "world");
+  client->writeFile("foo/diff.txt","different");
+
+  this->fileServer.writeFile(this->username, "foo/bar.txt", "hello",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "foo/changed.txt", "changed",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username,"foo/diff.txt","not same",QDateTime::currentDateTime());
+
+  client->start();
+  QCoreApplication::processEvents();
+  client->clientTick();
+  this->waitForNegotiation(*client);
+
+  auto result = client->getNegotiationState();
+  ASSERT_EQ(result->onlyInLeft.size(), 1);
+  ASSERT_EQ(result->onlyInLeft[0], "foo/baz.txt");
+  ASSERT_EQ(result->onlyInRight.size(), 1);
+  ASSERT_EQ(result->onlyInRight[0], "foo/changed.txt");
+  ASSERT_EQ(result->modified.size(), 1);
+  ASSERT_EQ(result->modified[0],"foo/diff.txt");
+}
+
+TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
+  auto client = this->makeClient();
+
+  client->writeFile("foo/bar.txt", "hello");
+  client->writeFile("foo/baz.txt", "world");
+
+  client->start();
+  QCoreApplication::processEvents();
+  client->clientTick();
+  this->waitForNegotiation(*client);
+
+  auto result = client->getNegotiationState();
+  ASSERT_EQ(result->onlyInLeft.size(), 2);
+  ASSERT_TRUE(result->onlyInLeft.contains("foo/bar.txt"));
+  ASSERT_TRUE(result->onlyInLeft.contains("foo/baz.txt"));
+  ASSERT_EQ(result->onlyInRight.size(), 0);
+  ASSERT_EQ(result->modified.size(), 0);
 }

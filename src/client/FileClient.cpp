@@ -11,6 +11,8 @@ FileClient::FileClient() {
   fileStorage = std::make_unique<LocalFileStorage>();
 }
 
+TreeDiff *FileClient::getNegotiationState() { return &negotiationState; }
+
 void FileClient::configure(const FileClientConfig &config) {
   username = config.username;
   password = config.password;
@@ -38,6 +40,8 @@ void FileClient::start() {
 void FileClient::setupConnections() {
   QObject::connect(socket, &QLocalSocket::connected, this,
                    [this]() { qDebug() << "Connected event fired."; });
+  QObject::connect(this, &FileClient::negotiationCompleted, this,
+                   &FileClient::handleNegotiationCompleted);
   QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
     MessageProtocol::processBuffer(socket, buffer, [this](Message *msg) {
       if (!msg) {
@@ -50,6 +54,9 @@ void FileClient::setupConnections() {
         break;
       case MessageType::SyncRequest:
         handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
+        break;
+      case MessageType::MerkleSync:
+        handleMerkleSyncResponse(static_cast<MerkleSyncMessage *>(msg));
         break;
       default:
         handleUnrecognized(msg);
@@ -219,7 +226,16 @@ void FileClient::clientTick() {
   if (shouldUseTimer)
     timer.stop();
 
-  
+  if (syncStrategy == SyncStrategy::Naive) {
+    naiveTick();
+  } else {
+    merkleTick();
+  }
+
+  checkSyncCompletionAndUnlock();
+}
+
+void FileClient::naiveTick() {
   auto trackedFiles = database.allTrackedFiles();
   auto newFiles = discoverNewFiles();
   auto deletedFiles = discoverDeletedFiles(trackedFiles);
@@ -231,8 +247,113 @@ void FileClient::clientTick() {
 
   sendNewFiles(newFiles);
   sendDeletedFiles(deletedFiles);
+}
 
-  checkSyncCompletionAndUnlock();
+bool FileClient::writeFile(const QString &path, const QByteArray &contents) {
+  if (!fileStorage->writeFile(username, path, contents)) {
+    qDebug() << "Failed to write file:" << path;
+    return false;
+  }
+  auto mtime = fileStorage->getMtime(username, path);
+  database.updateFileMtime(path, mtime.value_or(QDateTime::currentDateTime()));
+  if (merkleTree) {
+    merkleTree->addFile(path.toStdString());
+  }
+  return true;
+}
+
+void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
+  qDebug() << "Handling merkle response at client";
+  QList<QPair<QString, QByteArray>> serverHashes;
+  for (const auto &entry : msg->fileEntries) {
+    serverHashes.append({entry.path, entry.hash});
+  }
+
+  QList<QPair<QString, QByteArray>> clientHashes;
+  if (toDescend.isEmpty()) {
+    for (const auto &[path, hash] : merkleTree->getHashesAtDepth(0)) {
+      clientHashes.append({path, hash});
+    }
+  } else {
+    for (const auto &path : toDescend) {
+      clientHashes.append(merkleTree->getChildHashes(path));
+    }
+  }
+
+  auto diff = MerkleTree::symmetricHashDiff(clientHashes, serverHashes);
+  toDescend.clear();
+
+  auto processPaths = [&](const QList<QString> &paths, auto addToResult) {
+    for (const auto &path : paths) {
+      auto node = merkleTree->find(path.toStdString());
+      if (node.has_value() && (*node)->type == FileType::Directory) {
+        toDescend.append(path);
+      } else {
+        addToResult(path);
+      }
+    }
+  };
+
+  processPaths(diff.onlyInLeft, [&](const QString &p) {
+    if (!negotiationState.onlyInLeft.contains(p))
+      negotiationState.onlyInLeft.append(p);
+  });
+  processPaths(diff.onlyInRight, [&](const QString &p) {
+    if (!negotiationState.onlyInRight.contains(p))
+      negotiationState.onlyInRight.append(p);
+  });
+  processPaths(diff.modified, [&](const QString &p) {
+    if (!negotiationState.modified.contains(p))
+      negotiationState.modified.append(p);
+  });
+
+  if (!toDescend.isEmpty()) {
+    MerkleSyncMessage nextMsg;
+    nextMsg.username = username;
+    for (const auto &path : toDescend) {
+      for (const auto &[childPath, childHash] :
+           merkleTree->getChildHashes(path)) {
+        auto mtime = fileStorage->getMtime(username, childPath);
+        nextMsg.fileEntries.append(
+            {childPath, childHash, mtime.value_or(QDateTime())});
+      }
+    }
+    qDebug() << "Client sending: " << nextMsg;
+    MessageProtocol::sendMessage(socket, nextMsg);
+    return;
+  }
+  // we are out of things to descend into, means we finished negotiation
+  Q_EMIT negotiationCompleted();
+}
+
+void FileClient::handleNegotiationCompleted() {
+  qDebug() << "Now starting to sync files";
+  currentlyNegotiatingFileDiffs = false;
+  qDebug() << "Tree Diff:";
+  qDebug() << "(L) " << negotiationState.onlyInLeft;
+  qDebug() << "(R) " << negotiationState.onlyInRight;
+  qDebug() << "(M) " << negotiationState.modified;
+}
+
+void FileClient::merkleTick() {
+  qDebug() << "Merkle tick";
+  if (currentlyNegotiatingFileDiffs) {
+    qDebug() << "There is an existing negotiation going on";
+    return;
+  }
+  currentlyNegotiatingFileDiffs = true;
+  negotiationState = TreeDiff{};
+  toDescend.clear();
+
+  auto hashes = merkleTree->getHashesAtDepth(1);
+  MerkleSyncMessage msg;
+  msg.username = username;
+  for (const auto &[path, hash] : hashes) {
+    auto mtime = fileStorage->getMtime(username, path);
+    msg.fileEntries.append({path, hash, mtime.value_or(QDateTime())});
+  }
+  qDebug() << "Initiating negotiation with msg: " << msg;
+  MessageProtocol::sendMessage(socket, msg);
 }
 
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
@@ -244,5 +365,5 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
 }
 
 void FileClient::handleUnrecognized(Message *msg) {
-  qDebug() << "Unrecognized message type received";
+  qDebug() << "Unrecognized message type received from client";
 }

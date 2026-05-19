@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FileTree.h"
 #include <QByteArray>
 #include <QIODevice>
 #include <QJsonDocument>
@@ -35,6 +36,7 @@ struct MerkleEntry {
   QString path;
   QByteArray hash;
   QDateTime mtime;
+  FileType filetype;
 };
 
 class MerkleSyncMessage : public Message {
@@ -46,6 +48,9 @@ public:
   QByteArray serialize() const override;
   static std::unique_ptr<MerkleSyncMessage> deserialize(const QJsonObject &obj);
 };
+
+// in Messages.h or a separate MessageDebug.h
+QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg);
 
 class AuthMessage : public Message {
 public:

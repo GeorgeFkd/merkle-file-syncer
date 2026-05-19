@@ -7,6 +7,7 @@
 class MerkleTree : public FileTree {
 public:
   explicit MerkleTree(const std::string &rootDir);
+  explicit MerkleTree();
   void debug() const override;
   bool addFile(const std::string &relativePath) override;
   bool deleteFile(const std::string &relativePath) override;

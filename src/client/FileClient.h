@@ -31,28 +31,38 @@ public:
   void clientTick();
   LocalFileStorage *getStorage();
   void start();
+  TreeDiff *getNegotiationState();
+  bool writeFile(const QString &path, const QByteArray &contents);
 
 Q_SIGNALS:
   void syncCompleted();
+  void negotiationCompleted();
 
 private:
   void connectToServer();
   void sendNewFiles(const QList<QString> &files);
   void sendDeletedFiles(const QList<QString> &files);
   QLocalSocket *socket = nullptr;
-  
+
   QTimer timer;
   unsigned int tickIntervalMs;
   bool shouldUseTimer = true;
 
   void handleAuthResponse(AuthResponseMessage *msg);
   void handleSyncResponse(SyncRequestMessage *msg);
+  void handleMerkleSyncResponse(MerkleSyncMessage *msg);
   void handleWriteResponse(SyncRequestMessage *msg);
+
   void handleDeleteResponse(SyncRequestMessage *msg);
   void handleUnrecognized(Message *msg);
+
   QList<QString> discoverNewFiles();
   QList<QString> discoverDeletedFiles(const QSet<QString> &trackedFiles);
   void checkSyncCompletionAndUnlock();
+
+  void merkleTick();
+  void handleNegotiationCompleted();
+  void naiveTick();
   bool currentlyDoingSyncOps = false;
   int pendingMessages = 0;
   QString username, password;
@@ -62,4 +72,9 @@ private:
   SyncStrategy syncStrategy;
   std::unique_ptr<MerkleTree> merkleTree;
   QString serverName;
+
+  bool currentlyNegotiatingFileDiffs = false;
+  QList<QString> toDescend;
+  TreeDiff negotiationState;
+  
 };

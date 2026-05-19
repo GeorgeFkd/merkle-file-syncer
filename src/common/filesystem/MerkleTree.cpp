@@ -4,6 +4,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+MerkleTree::MerkleTree() {}
+
 // (lhs - rhs) ∪ (rhs - lhs) ∪ {x ∈ lhs ∩ rhs | hash_a(x) ≠ hash_b(x)}
 TreeDiff
 MerkleTree::symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
@@ -33,8 +35,15 @@ MerkleTree::symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
 
   // lhs ∩ rhs with different hashes
   for (const auto &[path, hash] : lhs) {
-    if (rhsMap.contains(path) && rhsMap[path] != hash)
-      result.modified.append(path);
+    if (rhsMap.contains(path) && rhsMap[path] != hash) {
+      if (rhsMap[path].isEmpty()) {
+        result.onlyInLeft.append(path);
+      } else if (hash.isEmpty()) {
+        result.onlyInRight.append(path);
+      } else {
+        result.modified.append(path);
+      }
+    }
   }
 
   return result;

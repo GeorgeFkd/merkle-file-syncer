@@ -31,37 +31,42 @@ void MessageProtocol::processBuffer(QIODevice *socket, QByteArray &buffer,
 MessageType MerkleSyncMessage::type() const { return MessageType::MerkleSync; }
 
 QByteArray MerkleSyncMessage::serialize() const {
-    QJsonObject obj;
-    obj["type"] = "merkle_sync";
-    obj["depth"] = depth;
-    QJsonArray files;
-    for (const auto &merkleEntry: fileEntries) {
-        QJsonObject entry;
-        entry["path"] = merkleEntry.path;
-        entry["hash"] = QString::fromUtf8(merkleEntry.hash.toBase64());
-        entry["mtime"] = merkleEntry.mtime.toString(Qt::ISODate);
-        files.append(entry);
-    }
-    obj["merkleEntries"] = files;
-    obj["username"] = username;
-    return QJsonDocument(obj).toJson();
+  QJsonObject obj;
+  obj["type"] = "merkle_sync";
+  obj["depth"] = depth;
+  QJsonArray files;
+  for (const auto &merkleEntry : fileEntries) {
+    QJsonObject entry;
+    entry["path"] = merkleEntry.path;
+    entry["hash"] = QString::fromUtf8(merkleEntry.hash.toBase64());
+    entry["mtime"] = merkleEntry.mtime.toString(Qt::ISODate);
+    entry["filetype"] = merkleEntry.filetype == FileType::Directory ? "directory" : "file";
+    files.append(entry);
+  }
+  obj["merkleEntries"] = files;
+  obj["username"] = username;
+  return QJsonDocument(obj).toJson();
 }
 
-std::unique_ptr<MerkleSyncMessage> MerkleSyncMessage::deserialize(const QJsonObject &obj) {
-    auto msg = std::make_unique<MerkleSyncMessage>();
-    msg->depth = obj["depth"].toInt();
-    auto pairs = obj["merkleEntries"].toArray();
-    for (const auto &entry : pairs) {
-        auto e = entry.toObject();
-        QString path = e["path"].toString();
-        QByteArray hash = QByteArray::fromBase64(e["hash"].toString().toUtf8());
-        auto mtime = QDateTime::fromString(e["mtime"].toString(),Qt::ISODate);
-        msg->fileEntries.append({path, hash,mtime});
-    }
-    msg->username = obj["username"].toString();
-    return msg;
-}
+std::unique_ptr<MerkleSyncMessage>
+MerkleSyncMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<MerkleSyncMessage>();
+  msg->depth = obj["depth"].toInt();
+  auto pairs = obj["merkleEntries"].toArray();
+  for (const auto &entry : pairs) {
+    auto e = entry.toObject();
+    QString path = e["path"].toString();
+    QByteArray hash = QByteArray::fromBase64(e["hash"].toString().toUtf8());
+    QString typeStr = e["filetype"].toString();
+    auto filetype =
+        typeStr == "directory" ? FileType::Directory : FileType::File;
 
+    auto mtime = QDateTime::fromString(e["mtime"].toString(), Qt::ISODate);
+    msg->fileEntries.append({path, hash, mtime,filetype});
+  }
+  msg->username = obj["username"].toString();
+  return msg;
+}
 
 MessageType AuthMessage::type() const { return MessageType::ClientAuth; }
 
@@ -182,4 +187,15 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
     msg->operationStatus = FileOperationStatus::ServerHasNewer;
 
   return msg;
+}
+QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
+  debug << "MerkleSyncMessage {";
+  debug << "username:" << msg.username;
+  debug << "entries: [";
+  for (const auto &entry : msg.fileEntries) {
+    debug << "{path:" << entry.path << "hash:" << entry.hash.toHex().left(8)
+          << "}";
+  }
+  debug << "]}";
+  return debug;
 }
