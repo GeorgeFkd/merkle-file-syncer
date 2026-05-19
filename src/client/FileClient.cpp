@@ -11,7 +11,9 @@ FileClient::FileClient() {
   fileStorage = std::make_unique<LocalFileStorage>();
 }
 
-TreeDiff *FileClient::getNegotiationState() { return &negotiationState; }
+NegotiationState *FileClient::getNegotiationState() {
+  return &negotiationState;
+}
 
 void FileClient::configure(const FileClientConfig &config) {
   username = config.username;
@@ -249,7 +251,10 @@ void FileClient::naiveTick() {
   sendDeletedFiles(deletedFiles);
 }
 
-bool FileClient::writeFile(const QString &path, const QByteArray &contents) {
+bool FileClient::writeFile(const QString &user, const QString &path,
+                           const QByteArray &contents) {
+  assert(user == username && "WriteFile for client should pass the username "
+                             "that it was configured with");
   if (!fileStorage->writeFile(username, path, contents)) {
     qDebug() << "Failed to write file:" << path;
     return false;
@@ -264,65 +269,86 @@ bool FileClient::writeFile(const QString &path, const QByteArray &contents) {
 
 void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle response at client";
-  QList<QPair<QString, QByteArray>> serverHashes;
-  for (const auto &entry : msg->fileEntries) {
-    serverHashes.append({entry.path, entry.hash});
+  assert(msg->phase != 0 && "Client always initiates the negotiation server "
+                            "should respond with phase 1 or 2.");
+  if (msg->phase == 2) {
+    //the server sets phase two when the file entries are empty so we dont need to do anymore work
+    qDebug() << "The negotiation is now complete";
+    Q_EMIT negotiationCompleted();
+    return;
   }
+  qDebug() << "message from server to client: " << &msg;
+  for (const auto &[parentPath, fileEntries] : msg->fileEntriesPerChild) {
+    QList<QPair<QString, QByteArray>> clientHashesOfNode;
 
-  QList<QPair<QString, QByteArray>> clientHashes;
-  if (toDescend.isEmpty()) {
-    for (const auto &[path, hash] : merkleTree->getHashesAtDepth(0)) {
-      clientHashes.append({path, hash});
+    if (parentPath.isEmpty()) {
+      // root level — use depth 1
+      for (const auto &[path, hash] : merkleTree->getHashesAtDepth(1)) {
+        clientHashesOfNode.append({path, hash});
+      }
+    } else {
+      auto parent = merkleTree->find(parentPath.toStdString());
+      assert(
+          parent.has_value() &&
+          "The server should not send a parentPath back that the client does "
+          "not have already, cause the client should not ask for nodes he "
+          "doesnt have, it just notes them for the sync stage");
+      clientHashesOfNode = merkleTree->getChildHashes(parentPath);
+      qDebug() << "Parent path is: " << parent.value()->path;
     }
-  } else {
-    for (const auto &path : toDescend) {
-      clientHashes.append(merkleTree->getChildHashes(path));
+
+    QList<QPair<QString, QByteArray>> serverHashesOfNode;
+    for (const auto &entry : fileEntries) {
+      serverHashesOfNode.append({entry.path, entry.hash});
     }
-  }
 
-  auto diff = MerkleTree::symmetricHashDiff(clientHashes, serverHashes);
-  toDescend.clear();
+    auto diff =
+        MerkleTree::symmetricHashDiff(clientHashesOfNode, serverHashesOfNode);
+    for (const auto &entry : diff.onlyInLeft) {
+      auto node = merkleTree->find(entry.toStdString());
+      assert(node.has_value());
+      negotiationState.diffEntries.onlyInLeft.append(
+          {node.value()->type == FileType::File, entry});
+    }
 
-  auto processPaths = [&](const QList<QString> &paths, auto addToResult) {
-    for (const auto &path : paths) {
-      auto node = merkleTree->find(path.toStdString());
-      if (node.has_value() && (*node)->type == FileType::Directory) {
-        toDescend.append(path);
+    for (const auto &entry : diff.onlyInRight) {
+      // just look up the entry in the server sent msg
+      FileType type = FileType::File;
+      for (const auto &serverEntry : fileEntries) {
+        if (serverEntry.path == entry) {
+          type = serverEntry.filetype;
+          break;
+        }
+      }
+      negotiationState.diffEntries.onlyInRight.append(
+          {type == FileType::File, entry});
+    }
+
+    for (const auto &entry : diff.modified) {
+      auto node = merkleTree->find(entry.toStdString());
+      assert(node.has_value());
+      if (node.value()->type == FileType::Directory) {
+        negotiationState.directoriesToCheckWithServer.append(entry);
       } else {
-        addToResult(path);
+        negotiationState.diffEntries.modified.append({true, entry});
       }
     }
-  };
+  }
 
-  processPaths(diff.onlyInLeft, [&](const QString &p) {
-    if (!negotiationState.onlyInLeft.contains(p))
-      negotiationState.onlyInLeft.append(p);
-  });
-  processPaths(diff.onlyInRight, [&](const QString &p) {
-    if (!negotiationState.onlyInRight.contains(p))
-      negotiationState.onlyInRight.append(p);
-  });
-  processPaths(diff.modified, [&](const QString &p) {
-    if (!negotiationState.modified.contains(p))
-      negotiationState.modified.append(p);
-  });
-
-  if (!toDescend.isEmpty()) {
+  if (!negotiationState.directoriesToCheckWithServer.isEmpty()) {
     MerkleSyncMessage nextMsg;
     nextMsg.username = username;
-    for (const auto &path : toDescend) {
-      for (const auto &[childPath, childHash] :
-           merkleTree->getChildHashes(path)) {
-        auto mtime = fileStorage->getMtime(username, childPath);
-        nextMsg.fileEntries.append(
-            {childPath, childHash, mtime.value_or(QDateTime())});
-      }
+    nextMsg.phase = 1;
+    nextMsg.depth = msg->depth + 1;
+
+    for (const auto &dirPath : negotiationState.directoriesToCheckWithServer) {
+      nextMsg.fileEntriesPerChild.append({dirPath, {}});
     }
-    qDebug() << "Client sending: " << nextMsg;
+
+    negotiationState.directoriesToCheckWithServer.clear();
     MessageProtocol::sendMessage(socket, nextMsg);
     return;
   }
-  // we are out of things to descend into, means we finished negotiation
   Q_EMIT negotiationCompleted();
 }
 
@@ -330,9 +356,9 @@ void FileClient::handleNegotiationCompleted() {
   qDebug() << "Now starting to sync files";
   currentlyNegotiatingFileDiffs = false;
   qDebug() << "Tree Diff:";
-  qDebug() << "(L) " << negotiationState.onlyInLeft;
-  qDebug() << "(R) " << negotiationState.onlyInRight;
-  qDebug() << "(M) " << negotiationState.modified;
+  qDebug() << "(L) " << negotiationState.diffEntries.onlyInLeft;
+  qDebug() << "(R) " << negotiationState.diffEntries.onlyInRight;
+  qDebug() << "(M) " << negotiationState.diffEntries.modified;
 }
 
 void FileClient::merkleTick() {
@@ -342,16 +368,13 @@ void FileClient::merkleTick() {
     return;
   }
   currentlyNegotiatingFileDiffs = true;
-  negotiationState = TreeDiff{};
-  toDescend.clear();
-
-  auto hashes = merkleTree->getHashesAtDepth(1);
+  negotiationState = NegotiationState{};
+  // toDescend.clear();
   MerkleSyncMessage msg;
   msg.username = username;
-  for (const auto &[path, hash] : hashes) {
-    auto mtime = fileStorage->getMtime(username, path);
-    msg.fileEntries.append({path, hash, mtime.value_or(QDateTime())});
-  }
+  msg.phase = 0;
+  msg.rootHash = merkleTree->rootHash();
+  msg.depth = 0;
   qDebug() << "Initiating negotiation with msg: " << msg;
   MessageProtocol::sendMessage(socket, msg);
 }

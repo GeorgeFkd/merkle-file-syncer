@@ -187,43 +187,59 @@ void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
                                          MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle sync message at server";
   auto serverTree = getUserTree(msg->username);
-
-  // group client entries by parent to find siblings server has
-  QSet<QString> clientPaths;
-  QSet<QString> parents;
-  for (const auto &entry : msg->fileEntries) {
-    clientPaths.insert(entry.path);
-    QString parent = entry.path.contains('/')
-                         ? entry.path.left(entry.path.lastIndexOf('/'))
-                         : "";
-    parents.insert(parent);
-  }
-
-  MerkleSyncMessage response;
-  response.username = msg->username;
-
-  // respond with server's hash for each client path
-  for (const auto &entry : msg->fileEntries) {
-    auto node = serverTree->find(entry.path.toStdString());
-    QByteArray hash = node.has_value() ? (*node)->hash : QByteArray{};
-    FileType type = node.has_value() ? (*node)->type : entry.filetype;
-    response.fileEntries.append({entry.path, hash, QDateTime{}, type});
-  }
-
-  // add paths server has at same level that client didn't send
-  for (const auto &parent : parents) {
-    auto siblings = parent.isEmpty() ? serverTree->getHashesAtDepth(1)
-                                     : serverTree->getChildHashes(parent);
-    for (const auto &[path, hash] : siblings) {
-      if (!clientPaths.contains(path)) {
+  qDebug() << "Message from client to server: " << msg;
+  if (msg->phase == 0) {
+    // nothing to check just send a message that the negotiation is over and no
+    // more files to process
+    if (serverTree->rootHash() == msg->rootHash) {
+      MerkleSyncMessage stopMsg;
+      stopMsg.phase = 2;
+      stopMsg.fileEntriesPerChild = {};
+      MessageProtocol::sendMessage(socket, stopMsg);
+      return;
+    } else {
+      MerkleSyncMessage response;
+      response.username = msg->username;
+      response.phase = 1;
+      response.depth = 1;
+      // send root's children as the first parentPath
+      auto rootChildren = serverTree->getHashesAtDepth(1);
+      QList<MerkleEntry> childEntries;
+      for (const auto &[path, hash] : rootChildren) {
         auto node = serverTree->find(path.toStdString());
         FileType type = node.has_value() ? (*node)->type : FileType::File;
-        response.fileEntries.append({path, hash, QDateTime{}, type});
+        childEntries.append({path, hash, QDateTime{}, type});
       }
+      response.fileEntriesPerChild.append({"", childEntries});
+      MessageProtocol::sendMessage(socket, response);
+      return;
     }
   }
+  MerkleSyncMessage response;
+  response.username = msg->username;
+  response.phase = 1;
+  response.depth = msg->depth;
 
-  qDebug() << "Sending response:" << response;
+  for (const auto &[parentPath, _] : msg->fileEntriesPerChild) {
+    auto node = serverTree->find(parentPath.toStdString());
+    assert(node.has_value() && (*node)->type == FileType::Directory);
+
+    auto childHashes = serverTree->getChildHashes(parentPath);
+    QList<MerkleEntry> childEntries;
+    for (const auto &[path, hash] : childHashes) {
+      auto childNode = serverTree->find(path.toStdString());
+      FileType type =
+          childNode.has_value() ? (*childNode)->type : FileType::File;
+      childEntries.append({path, hash, QDateTime{}, type});
+    }
+    response.fileEntriesPerChild.append({parentPath, childEntries});
+  }
+
+  // if no entries at all, negotiation is complete
+  if (response.fileEntriesPerChild.isEmpty()) {
+    response.phase = 2;
+  }
+
   MessageProtocol::sendMessage(socket, response);
 }
 

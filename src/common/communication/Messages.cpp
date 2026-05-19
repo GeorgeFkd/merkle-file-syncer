@@ -34,37 +34,57 @@ QByteArray MerkleSyncMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "merkle_sync";
   obj["depth"] = depth;
-  QJsonArray files;
-  for (const auto &merkleEntry : fileEntries) {
-    QJsonObject entry;
-    entry["path"] = merkleEntry.path;
-    entry["hash"] = QString::fromUtf8(merkleEntry.hash.toBase64());
-    entry["mtime"] = merkleEntry.mtime.toString(Qt::ISODate);
-    entry["filetype"] = merkleEntry.filetype == FileType::Directory ? "directory" : "file";
-    files.append(entry);
-  }
-  obj["merkleEntries"] = files;
   obj["username"] = username;
-  return QJsonDocument(obj).toJson();
+  obj["phase"] = phase;
+  obj["rootHash"] = QString::fromLatin1(rootHash.toHex());
+
+  QJsonArray childrenArray;
+  for (const auto &[childPath, entries] : fileEntriesPerChild) {
+    QJsonObject childObj;
+    childObj["path"] = childPath;
+    QJsonArray entriesArray;
+    for (const auto &entry : entries) {
+      QJsonObject entryObj;
+      entryObj["path"] = entry.path;
+      entryObj["hash"] = QString::fromLatin1(entry.hash.toHex());
+      entryObj["mtime"] = entry.mtime.toString(Qt::ISODate);
+      entryObj["type"] =
+          entry.filetype == FileType::Directory ? "directory" : "file";
+      entriesArray.append(entryObj);
+    }
+    childObj["entries"] = entriesArray;
+    childrenArray.append(childObj);
+  }
+  obj["fileEntriesPerChild"] = childrenArray;
+
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
 std::unique_ptr<MerkleSyncMessage>
 MerkleSyncMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<MerkleSyncMessage>();
   msg->depth = obj["depth"].toInt();
-  auto pairs = obj["merkleEntries"].toArray();
-  for (const auto &entry : pairs) {
-    auto e = entry.toObject();
-    QString path = e["path"].toString();
-    QByteArray hash = QByteArray::fromBase64(e["hash"].toString().toUtf8());
-    QString typeStr = e["filetype"].toString();
-    auto filetype =
-        typeStr == "directory" ? FileType::Directory : FileType::File;
-
-    auto mtime = QDateTime::fromString(e["mtime"].toString(), Qt::ISODate);
-    msg->fileEntries.append({path, hash, mtime,filetype});
-  }
   msg->username = obj["username"].toString();
+  msg->phase = static_cast<qint8>(obj["phase"].toInt());
+  msg->rootHash = QByteArray::fromHex(obj["rootHash"].toString().toLatin1());
+  for (const auto &childVal : obj["fileEntriesPerChild"].toArray()) {
+    QJsonObject childObj = childVal.toObject();
+    QString childPath = childObj["path"].toString();
+    QList<MerkleEntry> entries;
+    for (const auto &entryVal : childObj["entries"].toArray()) {
+      QJsonObject entryObj = entryVal.toObject();
+      MerkleEntry entry;
+      entry.path = entryObj["path"].toString();
+      entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
+      entry.mtime =
+          QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODate);
+      entry.filetype = entryObj["type"].toString() == "directory"
+                           ? FileType::Directory
+                           : FileType::File;
+      entries.append(entry);
+    }
+    msg->fileEntriesPerChild.append({childPath, entries});
+  }
   return msg;
 }
 
@@ -191,11 +211,19 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   debug << "MerkleSyncMessage {";
   debug << "username:" << msg.username;
-  debug << "entries: [";
-  for (const auto &entry : msg.fileEntries) {
-    debug << "{path:" << entry.path << "hash:" << entry.hash.toHex().left(8)
-          << "}";
+  debug << "phase:" << msg.phase;
+  debug << "depth:" << msg.depth;
+  debug << "fileEntriesPerChild: [";
+  for (const auto &[parentPath, entries] : msg.fileEntriesPerChild) {
+    debug << "  parent:" << parentPath << "entries: [";
+    for (const auto &entry : entries) {
+      debug << "    {path:" << entry.path
+            << "hash:" << entry.hash.toHex().left(8) << "type:"
+            << (entry.filetype == FileType::Directory ? "dir" : "file") << "}";
+    }
+    debug << "  ]";
   }
   debug << "]}";
   return debug;
 }
+

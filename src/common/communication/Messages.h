@@ -39,15 +39,22 @@ struct MerkleEntry {
   FileType filetype;
 };
 
+
+
 class MerkleSyncMessage : public Message {
 public:
   int depth;
   QString username;
-  QList<MerkleEntry> fileEntries;
+  //0: sending root hash to check, 1: sending child hashes that differ, 2: stop
+  qint8 phase;
+  QByteArray rootHash;
+  QList<QPair<QString,QList<MerkleEntry>>> fileEntriesPerChild;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<MerkleSyncMessage> deserialize(const QJsonObject &obj);
 };
+
+QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg);
 
 // in Messages.h or a separate MessageDebug.h
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg);

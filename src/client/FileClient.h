@@ -9,6 +9,20 @@
 #include <QString>
 #include <QTimer>
 
+
+struct NodesDiff{
+  //the bool is to signal whether it is a file or not(true -> file, false ->directory)
+  //so we can later ask the server for whole directories
+  QList<QPair<bool,QString>> onlyInLeft;
+  QList<QPair<bool,QString>> onlyInRight;
+  QList<QString> modified;
+};
+
+struct NegotiationState {
+  NodesDiff diffEntries;
+  QList<QString> directoriesToCheckWithServer;
+};
+
 enum class SyncStrategy { Naive, Merkle };
 
 struct FileClientConfig {
@@ -31,8 +45,8 @@ public:
   void clientTick();
   LocalFileStorage *getStorage();
   void start();
-  TreeDiff *getNegotiationState();
-  bool writeFile(const QString &path, const QByteArray &contents);
+  NegotiationState *getNegotiationState();
+  bool writeFile(const QString& user,const QString &path, const QByteArray &contents);
 
 Q_SIGNALS:
   void syncCompleted();
@@ -75,6 +89,6 @@ private:
 
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;
-  TreeDiff negotiationState;
+  NegotiationState negotiationState;
   
 };

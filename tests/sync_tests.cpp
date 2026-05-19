@@ -296,16 +296,22 @@ TYPED_TEST_SUITE(MerkleSyncTest, MerkleSyncTestImplementations);
 
 TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
   auto client = this->makeClient();
+  client->writeFile(this->username, "docs/report.txt", "report");
+  client->writeFile(this->username, "docs/notes.txt", "notes");
+  client->writeFile(this->username, "docs/draft.txt", "draft v1");
+  client->writeFile(this->username, "images/photo.jpg", "photo data");
+  client->writeFile(this->username, "readme.txt", "readme");
 
-  client->writeFile("foo/bar.txt", "hello");
-  client->writeFile("foo/baz.txt", "world");
-  client->writeFile("foo/diff.txt","different");
-
-  this->fileServer.writeFile(this->username, "foo/bar.txt", "hello",
+  this->fileServer.writeFile(this->username, "docs/report.txt", "report",
                              QDateTime::currentDateTime());
-  this->fileServer.writeFile(this->username, "foo/changed.txt", "changed",
+  this->fileServer.writeFile(this->username, "docs/draft.txt", "draft v2",
                              QDateTime::currentDateTime());
-  this->fileServer.writeFile(this->username,"foo/diff.txt","not same",QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "docs/extra.txt", "extra",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "images/photo.jpg", "photo data",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "readme.txt", "readme",
+                             QDateTime::currentDateTime());
 
   client->start();
   QCoreApplication::processEvents();
@@ -313,19 +319,21 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
   this->waitForNegotiation(*client);
 
   auto result = client->getNegotiationState();
-  ASSERT_EQ(result->onlyInLeft.size(), 1);
-  ASSERT_EQ(result->onlyInLeft[0], "foo/baz.txt");
-  ASSERT_EQ(result->onlyInRight.size(), 1);
-  ASSERT_EQ(result->onlyInRight[0], "foo/changed.txt");
-  ASSERT_EQ(result->modified.size(), 1);
-  ASSERT_EQ(result->modified[0],"foo/diff.txt");
+  ASSERT_EQ(result->diffEntries.onlyInLeft.size(), 1);
+  ASSERT_EQ(result->diffEntries.onlyInLeft[0].second, "docs/notes.txt");
+  ASSERT_EQ(result->diffEntries.onlyInRight.size(), 1);
+  ASSERT_EQ(result->diffEntries.onlyInRight[0].second, "docs/extra.txt");
+  ASSERT_EQ(result->diffEntries.modified.size(), 1);
+  ASSERT_EQ(result->diffEntries.modified[0], "docs/draft.txt");
 }
 
 TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   auto client = this->makeClient();
-
-  client->writeFile("foo/bar.txt", "hello");
-  client->writeFile("foo/baz.txt", "world");
+  client->writeFile(this->username, "docs/report.txt", "report");
+  client->writeFile(this->username, "docs/notes.txt", "notes");
+  client->writeFile(this->username, "images/photo.jpg", "photo data");
+  client->writeFile(this->username, "images/thumb.jpg", "thumb data");
+  client->writeFile(this->username, "readme.txt", "readme");
 
   client->start();
   QCoreApplication::processEvents();
@@ -333,9 +341,10 @@ TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   this->waitForNegotiation(*client);
 
   auto result = client->getNegotiationState();
-  ASSERT_EQ(result->onlyInLeft.size(), 2);
-  ASSERT_TRUE(result->onlyInLeft.contains("foo/bar.txt"));
-  ASSERT_TRUE(result->onlyInLeft.contains("foo/baz.txt"));
-  ASSERT_EQ(result->onlyInRight.size(), 0);
-  ASSERT_EQ(result->modified.size(), 0);
+  ASSERT_EQ(result->diffEntries.onlyInLeft.size(), 3);
+  ASSERT_TRUE(result->diffEntries.onlyInLeft.contains({false, "docs"}));
+  ASSERT_TRUE(result->diffEntries.onlyInLeft.contains({false, "images"}));
+  ASSERT_TRUE(result->diffEntries.onlyInLeft.contains({true, "readme.txt"}));
+  ASSERT_EQ(result->diffEntries.onlyInRight.size(), 0);
+  ASSERT_EQ(result->diffEntries.modified.size(), 0);
 }
