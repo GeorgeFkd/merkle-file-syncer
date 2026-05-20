@@ -110,7 +110,7 @@ TYPED_TEST_SUITE(SyncTest, SyncTestImplementations);
 
 TYPED_TEST(SyncTest, filesAreSynced) {
   auto client = this->makeClient();
-  client->getStorage()->writeFile(this->username, "test.txt", "Hello world");
+  client->writeFile(this->username, "test.txt", "Hello world");
 
   client->start();
   QCoreApplication::processEvents();
@@ -130,7 +130,7 @@ TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
 
   this->fileServer.writeFile(this->username, filename, "original",
                              base.addSecs(-10));
-  client->getStorage()->writeFile(this->username, filename,
+  client->writeFile(this->username, filename,
                                   "updated by client");
 
   client->start();
@@ -151,7 +151,7 @@ TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
 
   this->fileServer.writeFile(this->username, filename, "server newer version",
                              base.addSecs(10));
-  client->getStorage()->writeFile(this->username, filename,
+  client->writeFile(this->username, filename,
                                   "client older version");
 
   client->start();
@@ -172,7 +172,7 @@ TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
 
 TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
   auto client = this->makeClient();
-  client->getStorage()->writeFile(this->username, "subdir/nested/test.txt",
+  client->writeFile(this->username, "subdir/nested/test.txt",
                                   "nested content");
 
   client->start();
@@ -188,7 +188,7 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
 
 TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   auto client = this->makeClient();
-  client->getStorage()->writeFile(this->username, "test.txt", "to be deleted");
+  client->writeFile(this->username, "test.txt", "to be deleted");
 
   client->start();
   QCoreApplication::processEvents();
@@ -200,7 +200,7 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   ASSERT_TRUE(contentsBefore.has_value());
   ASSERT_EQ(contentsBefore.value(), QByteArray("to be deleted"));
 
-  client->getStorage()->deleteFile(this->username, "test.txt");
+  client->deleteFile(this->username, "test.txt");
   client->clientTick();
   this->waitForSync(*client);
 
@@ -211,8 +211,8 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
 
 TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   auto client = this->makeClient();
-  client->getStorage()->writeFile(this->username, "subdir/file1.txt", "file1");
-  client->getStorage()->writeFile(this->username, "subdir/file2.txt", "file2");
+  client->writeFile(this->username, "subdir/file1.txt", "file1");
+  client->writeFile(this->username, "subdir/file2.txt", "file2");
 
   client->start();
   QCoreApplication::processEvents();
@@ -226,8 +226,8 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
                   ->readFile(this->username, "subdir/file2.txt")
                   .has_value());
 
-  client->getStorage()->deleteFile(this->username, "subdir/file1.txt");
-  client->getStorage()->deleteFile(this->username, "subdir/file2.txt");
+  client->deleteFile(this->username, "subdir/file1.txt");
+  client->deleteFile(this->username, "subdir/file2.txt");
   client->clientTick();
   this->waitForSync(*client);
 
@@ -325,6 +325,41 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
   ASSERT_EQ(result->diffEntries.onlyInRight[0].second, "docs/extra.txt");
   ASSERT_EQ(result->diffEntries.modified.size(), 1);
   ASSERT_EQ(result->diffEntries.modified[0], "docs/draft.txt");
+}
+
+TYPED_TEST(MerkleSyncTest, negotiationIdentifiesDeletedFiles) {
+  auto client = this->makeClient();
+  client->writeFile(this->username, "docs/report.txt", "report");
+  client->writeFile(this->username, "docs/notes.txt", "notes");
+  client->writeFile(this->username, "docs/draft.txt", "draft");
+  client->writeFile(this->username, "images/photo.jpg", "photo data");
+  client->writeFile(this->username, "readme.txt", "readme");
+
+  this->fileServer.writeFile(this->username, "docs/report.txt", "report",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "docs/notes.txt", "notes",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "docs/draft.txt", "draft",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "images/photo.jpg", "photo data",
+                             QDateTime::currentDateTime());
+  this->fileServer.writeFile(this->username, "readme.txt", "readme",
+                             QDateTime::currentDateTime());
+
+  client->deleteFile(this->username, "docs/notes.txt");
+  client->deleteFile(this->username, "readme.txt");
+
+  client->start();
+  QCoreApplication::processEvents();
+  client->clientTick();
+  this->waitForNegotiation(*client);
+
+  auto result = client->getNegotiationState();
+  ASSERT_EQ(result->diffEntries.onlyInLeft.size(), 0);
+  ASSERT_EQ(result->diffEntries.onlyInRight.size(), 2);
+  ASSERT_TRUE(result->diffEntries.onlyInRight.contains({true, "docs/notes.txt"}));
+  ASSERT_TRUE(result->diffEntries.onlyInRight.contains({true, "readme.txt"}));
+  ASSERT_EQ(result->diffEntries.modified.size(), 0);
 }
 
 TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {

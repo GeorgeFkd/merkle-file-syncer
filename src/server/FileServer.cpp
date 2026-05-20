@@ -87,19 +87,12 @@ void FileServer::setupNewSocketConnection(QLocalSocket *socket) {
   });
 }
 
-// this method is only used in testing, should not be used for the server logic
-// bool FileServer::writeFile(const QString &user, const QString &file,
-//                            const QByteArray &contents, const QDateTime
-//                            &mtime) {
-//   database.updateFileMtime(user + "/" + file, mtime);
-//   return fileStorage->writeFile(user, file, contents);
-// }
-
 bool FileServer::writeFile(const QString &user, const QString &file,
                            const QByteArray &contents, const QDateTime &mtime) {
-  database.updateFileMtime(user + "/" + file, mtime);
   if (!fileStorage->writeFile(user, file, contents))
     return false;
+  database.updateFileMtime(user + "/" + file, mtime);
+
   getUserTree(user)->addFile(file.toStdString());
   return true;
 }

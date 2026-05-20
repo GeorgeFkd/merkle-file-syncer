@@ -107,15 +107,10 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
              << QString::fromStdString(msg->path);
     if (msg->contents.isEmpty())
       return;
-    if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+    if (!writeFile(username, QString::fromStdString(msg->path),
                                 msg->contents)) {
       qDebug() << "Failed to write server version to client";
       return;
-    }
-    qDebug() << "Written server version to client:"
-             << QString::fromStdString(msg->path);
-    if (merkleTree) {
-      merkleTree->addFile(msg->path);
     }
   }
 }
@@ -129,13 +124,10 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
              << QString::fromStdString(msg->path);
     if (msg->contents.isEmpty())
       return;
-    if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+    if (!writeFile(username, QString::fromStdString(msg->path),
                                 msg->contents)) {
       qDebug() << "Failed to restore file from server";
       return;
-    }
-    if (merkleTree) {
-      merkleTree->addFile(msg->path);
     }
   }
 }
@@ -146,14 +138,14 @@ QList<QString> FileClient::discoverNewFiles() {
     auto files = fileStorage->listFiles(username);
     for (const auto &relativePath : files) {
       auto storedMtime = database.readMtime(relativePath);
-      auto serverMtime = fileStorage->getMtime(username, relativePath);
-      if (!serverMtime.has_value())
+      auto localFileMtime = fileStorage->getMtime(username, relativePath);
+      if (!localFileMtime.has_value())
         continue;
-      if (storedMtime.has_value() && storedMtime.value() == serverMtime.value())
+      if (storedMtime.has_value() && storedMtime.value() == localFileMtime.value())
         continue;
-      database.updateFileMtime(relativePath, serverMtime.value());
+      database.updateFileMtime(relativePath, localFileMtime.value());
       qDebug() << "Discovered new/modified file:" << relativePath
-               << "mtime:" << serverMtime.value();
+               << "mtime:" << localFileMtime.value();
       newFiles.append(relativePath);
     }
     return newFiles;
@@ -162,7 +154,9 @@ QList<QString> FileClient::discoverNewFiles() {
 }
 
 QList<QString>
-FileClient::discoverDeletedFiles(const QSet<QString> &trackedFiles) {
+FileClient::discoverDeletedFiles() {
+  auto trackedFiles = database.allTrackedFiles();
+  qDebug() << "Tracked files: " << trackedFiles;
   if (syncStrategy == SyncStrategy::Naive) {
     auto fileList = fileStorage->listFiles(username);
     QList<QString> deletedFiles;
@@ -238,11 +232,10 @@ void FileClient::clientTick() {
 }
 
 void FileClient::naiveTick() {
-  auto trackedFiles = database.allTrackedFiles();
+  
   auto newFiles = discoverNewFiles();
-  auto deletedFiles = discoverDeletedFiles(trackedFiles);
+  auto deletedFiles = discoverDeletedFiles();
 
-  qDebug() << "Tracked files: " << trackedFiles;
   qDebug() << "New files: " << newFiles;
 
   pendingMessages = 0;
@@ -256,16 +249,35 @@ bool FileClient::writeFile(const QString &user, const QString &path,
   assert(user == username && "WriteFile for client should pass the username "
                              "that it was configured with");
   if (!fileStorage->writeFile(username, path, contents)) {
-    qDebug() << "Failed to write file:" << path;
+    qDebug() << "Failed to write file on client:" << path;
     return false;
   }
-  auto mtime = fileStorage->getMtime(username, path);
-  database.updateFileMtime(path, mtime.value_or(QDateTime::currentDateTime()));
+  // auto mtime = fileStorage->getMtime(username, path);
+  // we should not update the database, let the client discover it.
+  // database.updateFileMtime(path, mtime.value_or(QDateTime::currentDateTime()));
   if (merkleTree) {
     merkleTree->addFile(path.toStdString());
   }
   return true;
 }
+
+bool FileClient::deleteFile(const QString &user, const QString &path){
+  assert(user == username && "DeleteFile for client should pass the username "
+                             "that it was configured with");
+  if(!fileStorage->deleteFile(username, path)){
+    qDebug() << "Failed to delete file on client: " << path;
+    return false;
+  }
+  // we only remove the entry when it has been deleted in the server
+  // also note: tombstones for when we get to multidevice setups
+  // database.removeFileMtime(path);
+  if(merkleTree){
+    merkleTree->deleteFile(path.toStdString());
+  }
+
+  return true;
+}
+
 
 void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle response at client";

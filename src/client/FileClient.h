@@ -47,6 +47,7 @@ public:
   void start();
   NegotiationState *getNegotiationState();
   bool writeFile(const QString& user,const QString &path, const QByteArray &contents);
+  bool deleteFile(const QString &user, const QString &path);
 
 Q_SIGNALS:
   void syncCompleted();
@@ -71,7 +72,7 @@ private:
   void handleUnrecognized(Message *msg);
 
   QList<QString> discoverNewFiles();
-  QList<QString> discoverDeletedFiles(const QSet<QString> &trackedFiles);
+  QList<QString> discoverDeletedFiles();
   void checkSyncCompletionAndUnlock();
 
   void merkleTick();
