@@ -17,6 +17,16 @@ void FileServer::start() {
   setupConnections();
 }
 
+FileServer::~FileServer() {
+  server.close();  // stop accepting new connections
+  // detach all socket signals from us before our members get torn down
+  for (auto *socket : socketToTokenMap.keys())
+    socket->disconnect(this);
+  // also any sockets that connected but never authed
+  for (auto *socket : buffers.keys())
+    socket->disconnect(this);
+}
+
 void FileServer::setupConnections() {
   QObject::connect(&server, &QLocalServer::newConnection, [&]() {
     qDebug() << "New connection received";
@@ -51,8 +61,16 @@ void FileServer::setupNewSocketConnection(QLocalSocket *socket) {
   qDebug() << "Handling new connection.";
   QObject::connect(socket, &QLocalSocket::disconnected, socket,
                    &QLocalSocket::deleteLater);
-  QObject::connect(socket, &QLocalSocket::disconnected, this,
-                   [this, socket]() { buffers.remove(socket); });
+
+  QObject::connect(socket, &QLocalSocket::disconnected, this, [this, socket]() {
+    auto it = socketToTokenMap.find(socket);
+    if (it != socketToTokenMap.end()) {
+      sessionStore.revokeSession(it.value());
+      socketToTokenMap.erase(it);
+    }
+    buffers.remove(socket);
+  });
+
   QObject::connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
     qDebug() << "Ready read event fired.";
     MessageProtocol::processBuffer(
@@ -179,7 +197,12 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
 void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
                                          MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle sync message at server";
-  auto serverTree = getUserTree(msg->username);
+  auto username = getUsername(msg->token);
+  if (!username.has_value()) {
+    qDebug() << "No username for token: " << msg->token;
+    return;
+  }
+  auto serverTree = getUserTree(username.value());
   qDebug() << "Message from client to server: " << msg;
   if (msg->phase == 0) {
     // nothing to check just send a message that the negotiation is over and no
@@ -242,6 +265,11 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
 
+  auto username = getUsername(msg->token);
+  if (!username.has_value()) {
+    qDebug() << "No username for token: " << msg->token;
+    return;
+  }
   // we need the username prefix to namespace records per user
   QString storageKey = msg->username + "/" + QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(storageKey);
@@ -264,10 +292,50 @@ FileStorage *FileServer::getStorage() { return fileStorage.get(); }
 
 void FileServer::handleAuth(QLocalSocket *socket, AuthMessage *msg) {
   qDebug() << "User: " << msg->username << "Password: " << msg->password;
-
   AuthResponseMessage response;
+
+  if (msg->username.isEmpty() || msg->deviceName.isEmpty()) {
+    response.success = false;
+    response.error = "username and deviceName required";
+    MessageProtocol::sendMessage(socket, response);
+    return;
+  }
+
+  if (sessionStore.hasSession(msg->username, msg->deviceName)) {
+    response.success = false;
+    response.error = "device already connected";
+    MessageProtocol::sendMessage(socket, response);
+    return;
+  }
+
+  if (!verifyUserCredentials(msg->username, msg->password)) {
+    response.success = false;
+    response.error = "invalid credentials";
+    MessageProtocol::sendMessage(socket, response);
+    return;
+  }
+
+  QString token = sessionStore.createSession(msg->username, msg->deviceName);
+  socketToTokenMap.insert(socket, token);
+  qDebug() << "Inserted token " << token << " in store and created session for "
+           << msg->username << "," << msg->deviceName;
   response.success = true;
+  response.token = token;
   MessageProtocol::sendMessage(socket, response);
+  return;
+}
+
+bool FileServer::verifyUserCredentials(const QString &username,
+                                       const QString &password) {
+  return true;
+}
+
+std::optional<Session> FileServer::resolveSession(const QString &token) {
+  return sessionStore.getSession(token);
+}
+
+std::optional<QString> FileServer::getUsername(const QString &token) {
+  return sessionStore.getUsername(token);
 }
 
 void FileServer::handleUnrecognized(QLocalSocket *socket, Message *msg) {

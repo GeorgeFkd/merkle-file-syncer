@@ -4,9 +4,16 @@ target_include_directories(
   PUBLIC ${CMAKE_SOURCE_DIR}/src/common/communication
          ${CMAKE_SOURCE_DIR}/src/common/storage
          ${CMAKE_SOURCE_DIR}/src/common/filesystem
+         ${CMAKE_SOURCE_DIR}/src/common/auth
          ${CMAKE_SOURCE_DIR}/src/common)
 target_link_libraries(
-  merkle_server_lib PRIVATE messages filesutil storage filehasher Qt6::Core
-                            Qt6::Network)
+  merkle_server_lib
+  PRIVATE messages
+          filesutil
+          storage
+          filehasher
+          sessionregistry
+          Qt6::Core
+          Qt6::Network)
 qt_add_executable(merkle_server main.cpp)
 target_link_libraries(merkle_server PRIVATE merkle_server_lib Qt6::Network)

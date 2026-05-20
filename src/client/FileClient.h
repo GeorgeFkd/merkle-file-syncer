@@ -24,6 +24,8 @@ struct NegotiationState {
 };
 
 enum class SyncStrategy { Naive, Merkle };
+enum class ClientState {Disconnected,Connected,Authenticated,Authenticating};
+
 
 struct FileClientConfig {
   QString rootDir;
@@ -52,11 +54,14 @@ public:
 Q_SIGNALS:
   void syncCompleted();
   void negotiationCompleted();
+  void authenticated();
 
 private:
   void connectToServer();
   void sendNewFiles(const QList<QString> &files);
   void sendDeletedFiles(const QList<QString> &files);
+  void sendAuthRequest();
+  QString getDeviceName();
   QLocalSocket *socket = nullptr;
 
   QTimer timer;
@@ -91,5 +96,9 @@ private:
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;
   NegotiationState negotiationState;
+
+  bool pendingTick = false;
+  QString token;
+  ClientState state = ClientState::Disconnected;
   
 };

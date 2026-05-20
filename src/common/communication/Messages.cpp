@@ -33,6 +33,7 @@ MessageType MerkleSyncMessage::type() const { return MessageType::MerkleSync; }
 QByteArray MerkleSyncMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "merkle_sync";
+  obj["token"] = token;
   obj["depth"] = depth;
   obj["username"] = username;
   obj["phase"] = phase;
@@ -63,6 +64,7 @@ QByteArray MerkleSyncMessage::serialize() const {
 std::unique_ptr<MerkleSyncMessage>
 MerkleSyncMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<MerkleSyncMessage>();
+  msg->token = obj["token"].toString();
   msg->depth = obj["depth"].toInt();
   msg->username = obj["username"].toString();
   msg->phase = static_cast<qint8>(obj["phase"].toInt());
@@ -95,6 +97,7 @@ QByteArray AuthMessage::serialize() const {
   obj["type"] = "auth";
   obj["username"] = username;
   obj["password"] = password;
+  obj["devicename"] = deviceName;
   return QJsonDocument(obj).toJson();
 }
 
@@ -106,6 +109,8 @@ QByteArray AuthResponseMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "auth_response";
   obj["success"] = success;
+  obj["token"] = token;
+  obj["error"] = error;
   return QJsonDocument(obj).toJson();
 }
 
@@ -113,6 +118,7 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
 
   QJsonObject obj = QJsonDocument::fromJson(data).object();
   QString type = obj["type"].toString();
+  
   if (type == "auth")
     return AuthMessage::deserialize(obj);
   if (type == "auth_response")
@@ -132,6 +138,7 @@ MessageType SyncRequestMessage::type() const {
 QByteArray SyncRequestMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "sync_request";
+  obj["token"] = token;
   obj["path"] = QString::fromStdString(path);
   obj["contents"] = QString::fromUtf8(contents.toBase64());
   obj["mtime"] = QString::fromStdString(mtime);
@@ -171,6 +178,7 @@ std::unique_ptr<AuthMessage> AuthMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<AuthMessage>();
   msg->username = obj["username"].toString();
   msg->password = obj["password"].toString();
+  msg->deviceName = obj["devicename"].toString();
   return msg;
 }
 
@@ -178,12 +186,15 @@ std::unique_ptr<AuthResponseMessage>
 AuthResponseMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<AuthResponseMessage>();
   msg->success = obj["success"].toBool();
+  msg->token = obj["token"].toString();
+  msg->error = obj["error"].toString();
   return msg;
 }
 
 std::unique_ptr<SyncRequestMessage>
 SyncRequestMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<SyncRequestMessage>();
+  msg->token = obj["token"].toString();
   msg->path = obj["path"].toString().toStdString();
   msg->username = obj["username"].toString();
   msg->password = obj["password"].toString();
@@ -213,6 +224,7 @@ QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   debug << "username:" << msg.username;
   debug << "phase:" << msg.phase;
   debug << "depth:" << msg.depth;
+  debug << "token:" << msg.token;
   debug << "fileEntriesPerChild: [";
   for (const auto &[parentPath, entries] : msg.fileEntriesPerChild) {
     debug << "  parent:" << parentPath << "entries: [";

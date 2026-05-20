@@ -6,6 +6,7 @@
 #include "Messages.h"
 #include <QLocalServer>
 #include <QLocalSocket>
+#include "SessionRegistry.h"
 
 struct FileServerConfig {
   QString serverName;
@@ -16,6 +17,7 @@ class FileServer : public QObject {
   Q_OBJECT
 public:
   void start();
+  ~FileServer();
   void configure(FileServerConfig config);
   bool isListening();
   QString serverName();
@@ -48,6 +50,7 @@ private:
   void trySendNewerFile(SyncRequestMessage &response, const QString &user,
                         const QString &path, const QDateTime &serverMtime);
   MerkleTree *getUserTree(const QString &username);
+  std::optional<QString> getUsername(const QString& token);
 
   FileDb database;
   QHash<QLocalSocket *, QByteArray> buffers;
@@ -60,4 +63,9 @@ private:
 
   std::unordered_map<QString, std::unique_ptr<MerkleTree>, QStringHash>
       userTrees;
+  SessionRegistry sessionStore;
+  QHash<QLocalSocket*, QString> socketToTokenMap;
+  bool verifyUserCredentials(const QString& username,const QString& password);
+
+  std::optional<Session> resolveSession(const QString& token);
 };

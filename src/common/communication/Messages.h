@@ -21,7 +21,8 @@ public:
   virtual MessageType type() const = 0;
   virtual QByteArray serialize() const = 0;
   virtual ~Message() = default;
-
+  
+  QString token;
   static std::unique_ptr<Message> deserialize(const QByteArray &data);
 };
 
@@ -63,6 +64,7 @@ class AuthMessage : public Message {
 public:
   QString username;
   QString password;
+  QString deviceName;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<AuthMessage> deserialize(const QJsonObject &obj);
@@ -71,6 +73,7 @@ public:
 class AuthResponseMessage : public Message {
 public:
   bool success;
+  QString error;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<AuthResponseMessage>

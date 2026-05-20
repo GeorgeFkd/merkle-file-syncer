@@ -40,8 +40,23 @@ void FileClient::start() {
 }
 
 void FileClient::setupConnections() {
-  QObject::connect(socket, &QLocalSocket::connected, this,
-                   [this]() { qDebug() << "Connected event fired."; });
+  QObject::connect(socket, &QLocalSocket::connected, this, [this]() {
+    qDebug() << "Connected event fired.";
+    state = ClientState::Authenticating;
+    sendAuthRequest();
+  });
+  QObject::connect(socket,&QLocalSocket::disconnected,this,[this](){
+    state = ClientState::Disconnected;
+    token.clear();
+  });
+
+  QObject::connect(this, &FileClient::authenticated, this, [this]() {
+    if (pendingTick) {
+      pendingTick = false;
+      clientTick();
+    }
+  });
+
   QObject::connect(this, &FileClient::negotiationCompleted, this,
                    &FileClient::handleNegotiationCompleted);
   QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
@@ -51,7 +66,7 @@ void FileClient::setupConnections() {
         return;
       }
       switch (msg->type()) {
-      case MessageType::ClientAuth:
+      case MessageType::ServerAuthResponse:
         handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
         break;
       case MessageType::SyncRequest:
@@ -108,7 +123,7 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
     if (msg->contents.isEmpty())
       return;
     if (!writeFile(username, QString::fromStdString(msg->path),
-                                msg->contents)) {
+                   msg->contents)) {
       qDebug() << "Failed to write server version to client";
       return;
     }
@@ -125,7 +140,7 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
     if (msg->contents.isEmpty())
       return;
     if (!writeFile(username, QString::fromStdString(msg->path),
-                                msg->contents)) {
+                   msg->contents)) {
       qDebug() << "Failed to restore file from server";
       return;
     }
@@ -141,7 +156,8 @@ QList<QString> FileClient::discoverNewFiles() {
       auto localFileMtime = fileStorage->getMtime(username, relativePath);
       if (!localFileMtime.has_value())
         continue;
-      if (storedMtime.has_value() && storedMtime.value() == localFileMtime.value())
+      if (storedMtime.has_value() &&
+          storedMtime.value() == localFileMtime.value())
         continue;
       database.updateFileMtime(relativePath, localFileMtime.value());
       qDebug() << "Discovered new/modified file:" << relativePath
@@ -153,8 +169,7 @@ QList<QString> FileClient::discoverNewFiles() {
   return {};
 }
 
-QList<QString>
-FileClient::discoverDeletedFiles() {
+QList<QString> FileClient::discoverDeletedFiles() {
   auto trackedFiles = database.allTrackedFiles();
   qDebug() << "Tracked files: " << trackedFiles;
   if (syncStrategy == SyncStrategy::Naive) {
@@ -183,6 +198,7 @@ void FileClient::sendNewFiles(const QList<QString> &newFiles) {
     SyncRequestMessage msg;
     msg.username = username;
     msg.password = password;
+    msg.token = token;
     msg.path = relativePath.toStdString();
     msg.contents = contents.value();
     msg.mtime = mtime.has_value()
@@ -202,6 +218,7 @@ void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
     SyncRequestMessage msg;
     msg.username = username;
     msg.password = password;
+    msg.token = token;
     msg.path = trackedPath.toStdString();
     msg.contents = {};
     msg.mtime = mtime.has_value()
@@ -215,6 +232,11 @@ void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
 }
 
 void FileClient::clientTick() {
+  if(state != ClientState::Authenticated){
+    qDebug() << "Client is not yet authenticated";
+    pendingTick = true;
+    return;
+  }
   if (currentlyDoingSyncOps)
     return;
   currentlyDoingSyncOps = true;
@@ -232,7 +254,7 @@ void FileClient::clientTick() {
 }
 
 void FileClient::naiveTick() {
-  
+
   auto newFiles = discoverNewFiles();
   auto deletedFiles = discoverDeletedFiles();
 
@@ -254,37 +276,38 @@ bool FileClient::writeFile(const QString &user, const QString &path,
   }
   // auto mtime = fileStorage->getMtime(username, path);
   // we should not update the database, let the client discover it.
-  // database.updateFileMtime(path, mtime.value_or(QDateTime::currentDateTime()));
+  // database.updateFileMtime(path,
+  // mtime.value_or(QDateTime::currentDateTime()));
   if (merkleTree) {
     merkleTree->addFile(path.toStdString());
   }
   return true;
 }
 
-bool FileClient::deleteFile(const QString &user, const QString &path){
+bool FileClient::deleteFile(const QString &user, const QString &path) {
   assert(user == username && "DeleteFile for client should pass the username "
                              "that it was configured with");
-  if(!fileStorage->deleteFile(username, path)){
+  if (!fileStorage->deleteFile(username, path)) {
     qDebug() << "Failed to delete file on client: " << path;
     return false;
   }
   // we only remove the entry when it has been deleted in the server
   // also note: tombstones for when we get to multidevice setups
   // database.removeFileMtime(path);
-  if(merkleTree){
+  if (merkleTree) {
     merkleTree->deleteFile(path.toStdString());
   }
 
   return true;
 }
 
-
 void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle response at client";
   assert(msg->phase != 0 && "Client always initiates the negotiation server "
                             "should respond with phase 1 or 2.");
   if (msg->phase == 2) {
-    //the server sets phase two when the file entries are empty so we dont need to do anymore work
+    // the server sets phase two when the file entries are empty so we dont need
+    // to do anymore work
     qDebug() << "The negotiation is now complete";
     Q_EMIT negotiationCompleted();
     return;
@@ -350,6 +373,7 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   if (!negotiationState.directoriesToCheckWithServer.isEmpty()) {
     MerkleSyncMessage nextMsg;
     nextMsg.username = username;
+    nextMsg.token = token;
     nextMsg.phase = 1;
     nextMsg.depth = msg->depth + 1;
 
@@ -384,6 +408,7 @@ void FileClient::merkleTick() {
   // toDescend.clear();
   MerkleSyncMessage msg;
   msg.username = username;
+  msg.token = token;
   msg.phase = 0;
   msg.rootHash = merkleTree->rootHash();
   msg.depth = 0;
@@ -391,11 +416,32 @@ void FileClient::merkleTick() {
   MessageProtocol::sendMessage(socket, msg);
 }
 
+QString FileClient::getDeviceName(){
+  return "placeholderdevicename";
+}
+
+void FileClient::sendAuthRequest(){
+  AuthMessage msg;
+  msg.username = username;
+  msg.password = password;
+  msg.deviceName = getDeviceName();
+  MessageProtocol::sendMessage(socket, msg);
+}
+
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   if (msg->success) {
     qDebug() << "Auth successful";
+    assert(!msg->token.isEmpty() &&
+           "On auth success the token field should be populated");
+    token = msg->token;
+    qDebug() << "User's token is: " << token;
+    state = ClientState::Authenticated;
+    Q_EMIT authenticated();
   } else {
-    qDebug() << "Auth failed";
+    qDebug() << "Auth failed: " << msg->error;
+    state = ClientState::Disconnected;
+    socket->disconnectFromServer();
+
   }
 }
 
