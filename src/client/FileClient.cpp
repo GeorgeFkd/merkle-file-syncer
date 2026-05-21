@@ -22,7 +22,7 @@ void FileClient::configure(const FileClientConfig &config) {
   syncStrategy = config.syncStrategy;
   fileStorage->setRoot(QDir(config.rootDir).absolutePath());
   merkleTree = std::make_unique<MerkleTree>(
-      fileStorage->rootPath(username).toStdString());
+  fileStorage->rootPath(username).toStdString());
   merkleTree->setHasher(FileHasher(fileStorage.get(), username));
   merkleTree->buildFromStorage(fileStorage.get(), username);
   serverName = config.serverName;
@@ -196,8 +196,9 @@ void FileClient::sendNewFiles(const QList<QString> &newFiles) {
     }
     auto mtime = fileStorage->getMtime(username, relativePath);
     SyncRequestMessage msg;
-    msg.username = username;
-    msg.password = password;
+    // msg.username = username;
+    // msg.password = password;
+    qDebug() << "Token of client is: " << token;
     msg.token = token;
     msg.path = relativePath.toStdString();
     msg.contents = contents.value();
@@ -216,8 +217,9 @@ void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
     auto mtime = database.readMtime(trackedPath);
     database.removeFileMtime(trackedPath);
     SyncRequestMessage msg;
-    msg.username = username;
-    msg.password = password;
+    // msg.username = username;
+    // msg.password = password;
+    qDebug() << "Token of client is: " << token;
     msg.token = token;
     msg.path = trackedPath.toStdString();
     msg.contents = {};
@@ -372,7 +374,6 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
 
   if (!negotiationState.directoriesToCheckWithServer.isEmpty()) {
     MerkleSyncMessage nextMsg;
-    nextMsg.username = username;
     nextMsg.token = token;
     nextMsg.phase = 1;
     nextMsg.depth = msg->depth + 1;
@@ -407,7 +408,6 @@ void FileClient::merkleTick() {
   negotiationState = NegotiationState{};
   // toDescend.clear();
   MerkleSyncMessage msg;
-  msg.username = username;
   msg.token = token;
   msg.phase = 0;
   msg.rootHash = merkleTree->rootHash();

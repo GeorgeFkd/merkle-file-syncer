@@ -4,9 +4,9 @@
 #include "FileStorage.h"
 #include "MerkleTree.h"
 #include "Messages.h"
+#include "SessionRegistry.h"
 #include <QLocalServer>
 #include <QLocalSocket>
-#include "SessionRegistry.h"
 
 struct FileServerConfig {
   QString serverName;
@@ -47,10 +47,11 @@ private:
   void handleWriteRequest(SyncRequestMessage *msg, SyncRequestMessage &response,
                           const QString &storageKey,
                           const std::optional<QDateTime> &storedMtime);
-  void trySendNewerFile(SyncRequestMessage &response, const QString &user,
-                        const QString &path, const QDateTime &serverMtime);
+  void trySendNewerFile(SyncRequestMessage &response,const QString& username, const QString &path,
+                        const QDateTime &serverMtime);
+  QString getUserFrom(Message* msg);
   MerkleTree *getUserTree(const QString &username);
-  std::optional<QString> getUsername(const QString& token);
+  std::optional<QString> getUsername(const QString &token);
 
   FileDb database;
   QHash<QLocalSocket *, QByteArray> buffers;
@@ -64,8 +65,8 @@ private:
   std::unordered_map<QString, std::unique_ptr<MerkleTree>, QStringHash>
       userTrees;
   SessionRegistry sessionStore;
-  QHash<QLocalSocket*, QString> socketToTokenMap;
-  bool verifyUserCredentials(const QString& username,const QString& password);
+  QHash<QLocalSocket *, QString> socketToTokenMap;
+  bool verifyUserCredentials(const QString &username, const QString &password);
 
-  std::optional<Session> resolveSession(const QString& token);
+  std::optional<Session> resolveSession(const QString &token);
 };

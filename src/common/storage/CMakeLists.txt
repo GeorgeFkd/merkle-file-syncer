@@ -1,7 +1,7 @@
 option(BUILD_S3_IMPL "Build S3 storage implementation" OFF)
 
 set(STORAGE_SOURCES FileDb.cpp FileDb.h FileStorage.h LocalFileStorage.cpp
-                    LocalFileStorage.h)
+                    LocalFileStorage.h FileStorage.cpp)
 
 if(BUILD_S3_IMPL)
   list(APPEND STORAGE_SOURCES S3FileStorage.cpp S3FileStorage.h)

@@ -35,7 +35,6 @@ QByteArray MerkleSyncMessage::serialize() const {
   obj["type"] = "merkle_sync";
   obj["token"] = token;
   obj["depth"] = depth;
-  obj["username"] = username;
   obj["phase"] = phase;
   obj["rootHash"] = QString::fromLatin1(rootHash.toHex());
 
@@ -58,7 +57,7 @@ QByteArray MerkleSyncMessage::serialize() const {
   }
   obj["fileEntriesPerChild"] = childrenArray;
 
-  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+  return QJsonDocument(obj).toJson();
 }
 
 std::unique_ptr<MerkleSyncMessage>
@@ -66,7 +65,6 @@ MerkleSyncMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<MerkleSyncMessage>();
   msg->token = obj["token"].toString();
   msg->depth = obj["depth"].toInt();
-  msg->username = obj["username"].toString();
   msg->phase = static_cast<qint8>(obj["phase"].toInt());
   msg->rootHash = QByteArray::fromHex(obj["rootHash"].toString().toLatin1());
   for (const auto &childVal : obj["fileEntriesPerChild"].toArray()) {
@@ -142,8 +140,6 @@ QByteArray SyncRequestMessage::serialize() const {
   obj["path"] = QString::fromStdString(path);
   obj["contents"] = QString::fromUtf8(contents.toBase64());
   obj["mtime"] = QString::fromStdString(mtime);
-  obj["username"] = username;
-  obj["password"] = password;
   switch (operationStatus) {
   case FileOperationStatus::DoIt:
     obj["opstatus"] = "doit";
@@ -196,8 +192,6 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<SyncRequestMessage>();
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString().toStdString();
-  msg->username = obj["username"].toString();
-  msg->password = obj["password"].toString();
   msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
   msg->mtime = obj["mtime"].toString().toStdString();
 
@@ -221,7 +215,7 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
 }
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   debug << "MerkleSyncMessage {";
-  debug << "username:" << msg.username;
+  debug << "token: " << msg.token;
   debug << "phase:" << msg.phase;
   debug << "depth:" << msg.depth;
   debug << "token:" << msg.token;

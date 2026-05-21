@@ -13,4 +13,5 @@ public:
     virtual bool deleteFile(const QString &user, const QString &filename) = 0;
     virtual QList<QString> listFiles(const QString &user) const = 0;
     virtual void cleanup(const QString &user) = 0;
+    void showFileTree(const QString &user) const;
 };

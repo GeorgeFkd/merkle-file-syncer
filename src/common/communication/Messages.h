@@ -45,7 +45,6 @@ struct MerkleEntry {
 class MerkleSyncMessage : public Message {
 public:
   int depth;
-  QString username;
   //0: sending root hash to check, 1: sending child hashes that differ, 2: stop
   qint8 phase;
   QByteArray rootHash;
@@ -57,8 +56,6 @@ public:
 
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg);
 
-// in Messages.h or a separate MessageDebug.h
-QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg);
 
 class AuthMessage : public Message {
 public:
@@ -90,8 +87,6 @@ public:
   std::string mtime;
   FileOperationType operationType;
   FileOperationStatus operationStatus;
-  QString username;
-  QString password;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<SyncRequestMessage>

@@ -18,7 +18,7 @@ void FileServer::start() {
 }
 
 FileServer::~FileServer() {
-  server.close();  // stop accepting new connections
+  server.close(); // stop accepting new connections
   // detach all socket signals from us before our members get torn down
   for (auto *socket : socketToTokenMap.keys())
     socket->disconnect(this);
@@ -115,9 +115,21 @@ bool FileServer::writeFile(const QString &user, const QString &file,
   return true;
 }
 
+QString FileServer::getUserFrom(Message *msg) {
+  auto username = getUsername(msg->token);
+  if (!username.has_value()) {
+    qDebug() << "No username for token: " << msg->token;
+    return "";
+  }
+  return username.value();
+}
+
 void FileServer::handleDeleteRequest(
     SyncRequestMessage *msg, SyncRequestMessage &response,
     const QString &storageKey, const std::optional<QDateTime> &storedMtime) {
+  auto username = getUserFrom(msg);
+  assert(username != "" &&
+         "Token should always be set so we can fetch username on server");
   if (!storedMtime.has_value()) {
     response.operationStatus = FileOperationStatus::Done;
     return;
@@ -127,14 +139,13 @@ void FileServer::handleDeleteRequest(
   QDateTime serverMtime = storedMtime.value();
   bool serverMtimeIsAhead = serverMtime > clientMtime;
   if (serverMtimeIsAhead) {
-    trySendNewerFile(response, msg->username, QString::fromStdString(msg->path),
+    trySendNewerFile(response, username, QString::fromStdString(msg->path),
                      serverMtime);
     return;
   }
 
   assert(!serverMtimeIsAhead);
-  if (!fileStorage->deleteFile(msg->username,
-                               QString::fromStdString(msg->path))) {
+  if (!fileStorage->deleteFile(username, QString::fromStdString(msg->path))) {
     qDebug() << "Failed to delete file from storage";
     response.operationStatus = FileOperationStatus::Error;
     return;
@@ -146,14 +157,15 @@ void FileServer::handleDeleteRequest(
 }
 
 void FileServer::trySendNewerFile(SyncRequestMessage &response,
-                                  const QString &user, const QString &path,
+                                  const QString &username, const QString &path,
                                   const QDateTime &serverMtime) {
-  auto contents = fileStorage->readFile(user, path);
+  auto contents = fileStorage->readFile(username, path);
   if (!contents.has_value()) {
     qDebug() << "Failed to read file from storage";
     response.operationStatus = FileOperationStatus::Error;
     return;
   }
+
   response.contents = contents.value();
   response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
   response.operationStatus = FileOperationStatus::ServerHasNewer;
@@ -163,16 +175,19 @@ void FileServer::trySendNewerFile(SyncRequestMessage &response,
 void FileServer::handleWriteRequest(
     SyncRequestMessage *msg, SyncRequestMessage &response,
     const QString &storageKey, const std::optional<QDateTime> &storedMtime) {
+  auto username = getUserFrom(msg);
+  assert(username != "" &&
+         "Token should always be set so we can fetch username on server");
   QDateTime clientMtime =
       QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
 
   if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
-    trySendNewerFile(response, msg->username, QString::fromStdString(msg->path),
+    trySendNewerFile(response, username, QString::fromStdString(msg->path),
                      storedMtime.value());
     return;
   }
 
-  if (!fileStorage->writeFile(msg->username, QString::fromStdString(msg->path),
+  if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
                               msg->contents)) {
     qDebug() << "Failed to write file to storage";
     response.operationStatus = FileOperationStatus::Error;
@@ -197,12 +212,11 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
 void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
                                          MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle sync message at server";
-  auto username = getUsername(msg->token);
-  if (!username.has_value()) {
-    qDebug() << "No username for token: " << msg->token;
-    return;
-  }
-  auto serverTree = getUserTree(username.value());
+  auto username = getUserFrom(msg);
+  assert(username != "" &&
+         "Token should always be set so we can fetch username on server");
+
+  auto serverTree = getUserTree(username);
   qDebug() << "Message from client to server: " << msg;
   if (msg->phase == 0) {
     // nothing to check just send a message that the negotiation is over and no
@@ -215,7 +229,6 @@ void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
       return;
     } else {
       MerkleSyncMessage response;
-      response.username = msg->username;
       response.phase = 1;
       response.depth = 1;
       // send root's children as the first parentPath
@@ -232,7 +245,6 @@ void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
     }
   }
   MerkleSyncMessage response;
-  response.username = msg->username;
   response.phase = 1;
   response.depth = msg->depth;
 
@@ -265,13 +277,12 @@ void FileServer::handleSyncRequest(QLocalSocket *socket,
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
 
-  auto username = getUsername(msg->token);
-  if (!username.has_value()) {
-    qDebug() << "No username for token: " << msg->token;
-    return;
-  }
+  auto username = getUserFrom(msg);
+  assert(username != "" &&
+         "Token should always be set so we can fetch username on server");
+
   // we need the username prefix to namespace records per user
-  QString storageKey = msg->username + "/" + QString::fromStdString(msg->path);
+  QString storageKey = username + "/" + QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(storageKey);
 
   SyncRequestMessage response;
