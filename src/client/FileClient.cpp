@@ -56,7 +56,7 @@ void FileClient::setupConnections() {
       clientTick();
     }
   });
-
+  QObject::connect(this,&FileClient::outboundFileCommandsReady,this,&FileClient::flushOutboundCommands);
   QObject::connect(this, &FileClient::negotiationCompleted, this,
                    &FileClient::handleNegotiationCompleted);
   QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
@@ -81,6 +81,8 @@ void FileClient::setupConnections() {
       }
     });
   });
+
+
   if (shouldUseTimer) {
     QObject::connect(&timer, &QTimer::timeout, this,
                      [this]() { clientTick(); });
@@ -187,7 +189,16 @@ QList<QString> FileClient::discoverDeletedFiles() {
   return {};
 }
 
-void FileClient::sendNewFiles(const QList<QString> &newFiles) {
+void FileClient::flushOutboundCommands() {
+  qDebug() << "Flushing sync requests accumulated from client";
+  for(auto it= commandsToSend.begin(); it != commandsToSend.end(); ++it) {
+    MessageProtocol::sendMessage(socket, it.value());
+    pendingMessages++;
+  }
+  commandsToSend.clear();
+}
+
+void FileClient::stageNewFilesForSending(const QList<QString> &newFiles) {
   for (const auto &relativePath : newFiles) {
     auto contents = fileStorage->readFile(username, relativePath);
     if (!contents.has_value()) {
@@ -196,8 +207,6 @@ void FileClient::sendNewFiles(const QList<QString> &newFiles) {
     }
     auto mtime = fileStorage->getMtime(username, relativePath);
     SyncRequestMessage msg;
-    // msg.username = username;
-    // msg.password = password;
     qDebug() << "Token of client is: " << token;
     msg.token = token;
     msg.path = relativePath.toStdString();
@@ -207,18 +216,15 @@ void FileClient::sendNewFiles(const QList<QString> &newFiles) {
                     : "";
     msg.operationType = FileOperationType::Write;
     msg.operationStatus = FileOperationStatus::DoIt;
-    MessageProtocol::sendMessage(socket, msg);
-    pendingMessages++;
+    commandsToSend.insert(relativePath,msg);
   }
 }
 
-void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
+void FileClient::stageDeletedFilesForSending(const QList<QString> &deletedFiles) {
   for (const auto &trackedPath : deletedFiles) {
     auto mtime = database.readMtime(trackedPath);
     database.removeFileMtime(trackedPath);
     SyncRequestMessage msg;
-    // msg.username = username;
-    // msg.password = password;
     qDebug() << "Token of client is: " << token;
     msg.token = token;
     msg.path = trackedPath.toStdString();
@@ -228,8 +234,7 @@ void FileClient::sendDeletedFiles(const QList<QString> &deletedFiles) {
                     : "";
     msg.operationType = FileOperationType::Delete;
     msg.operationStatus = FileOperationStatus::DoIt;
-    MessageProtocol::sendMessage(socket, msg);
-    pendingMessages++;
+    commandsToSend.insert(trackedPath,msg);
   }
 }
 
@@ -264,8 +269,9 @@ void FileClient::naiveTick() {
 
   pendingMessages = 0;
 
-  sendNewFiles(newFiles);
-  sendDeletedFiles(deletedFiles);
+  stageNewFilesForSending(newFiles);
+  stageDeletedFilesForSending(deletedFiles);
+  Q_EMIT outboundFileCommandsReady();
 }
 
 bool FileClient::writeFile(const QString &user, const QString &path,
@@ -319,7 +325,7 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
     QList<QPair<QString, QByteArray>> clientHashesOfNode;
 
     if (parentPath.isEmpty()) {
-      // root level — use depth 1
+      // root level, use depth 1
       for (const auto &[path, hash] : merkleTree->getHashesAtDepth(1)) {
         clientHashesOfNode.append({path, hash});
       }
@@ -406,7 +412,6 @@ void FileClient::merkleTick() {
   }
   currentlyNegotiatingFileDiffs = true;
   negotiationState = NegotiationState{};
-  // toDescend.clear();
   MerkleSyncMessage msg;
   msg.token = token;
   msg.phase = 0;

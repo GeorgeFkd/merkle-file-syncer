@@ -78,6 +78,7 @@ protected:
                                        .syncStrategy = SyncStrategy::Naive,
                                        .manualTick = true,
                                        .serverName = serverName});
+    client->start();
   }
 
   void TearDown() override {
@@ -116,7 +117,6 @@ TYPED_TEST(SyncTest, singularFileIsSynced) {
   auto filecontents = "Hello World";
   this->client->writeFile(this->username, filename, filecontents);
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));
@@ -135,7 +135,6 @@ TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
                              base.addSecs(-10));
   this->client->writeFile(this->username, filename, "updated by client");
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));
@@ -154,7 +153,6 @@ TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
                              base.addSecs(10));
   this->client->writeFile(this->username, filename, "client older version");
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));
@@ -174,7 +172,6 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
   this->client->writeFile(this->username, "subdir/nested/test.txt",
                           "nested content");
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));
@@ -188,7 +185,6 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
 TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   this->client->writeFile(this->username, "test.txt", "to be deleted");
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));
@@ -211,7 +207,6 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   this->client->writeFile(this->username, "subdir/file1.txt", "file1");
   this->client->writeFile(this->username, "subdir/file2.txt", "file2");
 
-  this->client->start();
   QCoreApplication::processEvents();
   this->client->clientTick();
   this->waitForSync(*(this->client));

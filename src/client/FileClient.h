@@ -10,6 +10,8 @@
 #include <QTimer>
 
 
+// FileCommand: Operation Type,Path,Contents,Mtime
+
 struct NodesDiff{
   //the bool is to signal whether it is a file or not(true -> file, false ->directory)
   //so we can later ask the server for whole directories
@@ -35,6 +37,7 @@ struct FileClientConfig {
   bool manualTick = false;
   unsigned int tickIntervalMs = 1000;
   QString serverName;
+  QString deviceName;
 };
 
 class FileClient : public QObject {
@@ -55,11 +58,12 @@ Q_SIGNALS:
   void syncCompleted();
   void negotiationCompleted();
   void authenticated();
+  void outboundFileCommandsReady();
 
 private:
   void connectToServer();
-  void sendNewFiles(const QList<QString> &files);
-  void sendDeletedFiles(const QList<QString> &files);
+  void stageNewFilesForSending(const QList<QString> &files);
+  void stageDeletedFilesForSending(const QList<QString> &files);
   void sendAuthRequest();
   QString getDeviceName();
   QLocalSocket *socket = nullptr;
@@ -78,6 +82,7 @@ private:
 
   QList<QString> discoverNewFiles();
   QList<QString> discoverDeletedFiles();
+  void flushOutboundCommands();
   void checkSyncCompletionAndUnlock();
 
   void merkleTick();
@@ -100,5 +105,6 @@ private:
   bool pendingTick = false;
   QString token;
   ClientState state = ClientState::Disconnected;
+  QHash<QString,SyncRequestMessage> commandsToSend;
   
 };
