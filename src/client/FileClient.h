@@ -76,7 +76,7 @@ private:
   void handleSyncResponse(SyncRequestMessage *msg);
   void handleMerkleSyncResponse(MerkleSyncMessage *msg);
   void handleWriteResponse(SyncRequestMessage *msg);
-
+  void handleListResponse(ListResponseMessage *msg);
   void handleDeleteResponse(SyncRequestMessage *msg);
   void handleUnrecognized(Message *msg);
 
@@ -89,6 +89,7 @@ private:
   void handleNegotiationCompleted();
   void naiveTick();
   bool currentlyDoingSyncOps = false;
+  bool awaitingListResponse = false;
   int pendingMessages = 0;
   QString username, password;
   QByteArray buffer;
@@ -97,6 +98,7 @@ private:
   SyncStrategy syncStrategy;
   std::unique_ptr<MerkleTree> merkleTree;
   QString serverName;
+  QString deviceName;
 
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;

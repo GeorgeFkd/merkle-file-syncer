@@ -96,6 +96,12 @@ void FileServer::setupNewSocketConnection(QLocalSocket *socket) {
                 socket, static_cast<MerkleSyncMessage *>(msg));
             break;
           }
+
+          case MessageType::ListRequest: {
+            Q_EMIT handleListRequest(socket,
+                                     static_cast<ListRequestMessage *>(msg));
+            break;
+          }
           default: {
             Q_EMIT handleUnrecognized(socket, msg);
             break;
@@ -127,9 +133,12 @@ QString FileServer::getUserFrom(Message *msg) {
 void FileServer::handleDeleteRequest(
     SyncRequestMessage *msg, SyncRequestMessage &response,
     const QString &storageKey, const std::optional<QDateTime> &storedMtime) {
+
   auto username = getUserFrom(msg);
   assert(username != "" &&
          "Token should always be set so we can fetch username on server");
+  qDebug() << "Delete request for user: " << username
+           << "at device: " << sessionStore.getDeviceName(msg->token).value();
   if (!storedMtime.has_value()) {
     response.operationStatus = FileOperationStatus::Done;
     return;
@@ -143,19 +152,15 @@ void FileServer::handleDeleteRequest(
                      serverMtime);
     return;
   }
-
   assert(!serverMtimeIsAhead);
   if (!fileStorage->deleteFile(username, QString::fromStdString(msg->path))) {
     qDebug() << "Failed to delete file from storage";
     response.operationStatus = FileOperationStatus::Error;
     return;
-  } else {
-    database.removeFileMtime(storageKey);
-    response.operationStatus = FileOperationStatus::Done;
-    return;
   }
+  database.markDeleted(storageKey, QDateTime::currentDateTime());
+  response.operationStatus = FileOperationStatus::Done;
 }
-
 void FileServer::trySendNewerFile(SyncRequestMessage &response,
                                   const QString &username, const QString &path,
                                   const QDateTime &serverMtime) {
@@ -219,8 +224,8 @@ void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
   auto serverTree = getUserTree(username);
   qDebug() << "Message from client to server: " << msg;
   if (msg->phase == 0) {
-    // nothing to check just send a message that the negotiation is over and no
-    // more files to process
+    // nothing to check just send a message that the negotiation is over and
+    // no more files to process
     if (serverTree->rootHash() == msg->rootHash) {
       MerkleSyncMessage stopMsg;
       stopMsg.phase = 2;
@@ -268,6 +273,40 @@ void FileServer::handleMerkleSyncRequest(QLocalSocket *socket,
     response.phase = 2;
   }
 
+  MessageProtocol::sendMessage(socket, response);
+}
+
+void FileServer::handleListRequest(QLocalSocket *socket,
+                                   ListRequestMessage *msg) {
+  auto username = getUserFrom(msg);
+  assert(username != "" &&
+         "Token should always be set so we can fetch username on server");
+  ListResponseMessage response;
+
+  // Live files from storage
+  auto files = fileStorage->listFiles(username);
+  for (const auto &path : files) {
+    if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/"))
+      continue;
+    auto storageKey = username + "/" + path;
+    auto mtime = database.readMtime(storageKey);
+    assert(mtime.has_value() && "File in storage must have a DB mtime entry");
+    response.entries.append({path, mtime.value(), false});
+  }
+
+  // Tombstones
+  auto tombstones = database.allTombstones();
+  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
+    const QString &storageKey = it.key();
+    // Filter to this user
+    QString prefix = username + "/";
+    if (!storageKey.startsWith(prefix)) continue;
+    QString path = storageKey.mid(prefix.length());
+    if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/"))
+      continue;
+    response.entries.append({path, it.value(), true});
+  }
+  
   MessageProtocol::sendMessage(socket, response);
 }
 

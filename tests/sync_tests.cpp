@@ -69,6 +69,7 @@ protected:
     fileServer.configure(
         FileServerConfig{.serverName = serverName,
                          .storage = Tag::makeStorage(serverDir->path())});
+    fileServer.getStorage()->cleanup(username);
     fileServer.start();
 
     client = std::make_unique<FileClient>();
@@ -77,7 +78,8 @@ protected:
                                        .password = "bar",
                                        .syncStrategy = SyncStrategy::Naive,
                                        .manualTick = true,
-                                       .serverName = serverName});
+                                       .serverName = serverName,
+                                       .deviceName = deviceName});
     client->start();
   }
 
@@ -101,6 +103,10 @@ protected:
     QTimer::singleShot(100, &loop, &QEventLoop::quit);
     loop.exec();
   }
+  bool filesystemsAreEqual() {
+    return this->client->getStorage()->isEqualTo(*this->fileServer.getStorage(),
+                                                 this->username);
+  }
 
   std::unique_ptr<FileClient> client;
   QDir *clientDir = nullptr;
@@ -108,6 +114,7 @@ protected:
   QString serverName = "merkle_sync_test";
   FileServer fileServer;
   QString username = "foo";
+  QString deviceName = "client1";
 };
 
 TYPED_TEST_SUITE(SyncTest, SyncTestImplementations);
@@ -121,10 +128,7 @@ TYPED_TEST(SyncTest, singularFileIsSynced) {
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
-  auto contents =
-      this->fileServer.getStorage()->readFile(this->username, filename);
-  ASSERT_TRUE(contents.has_value());
-  ASSERT_EQ(contents.value(), QByteArray(filecontents));
+  ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
 TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
@@ -139,10 +143,7 @@ TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
-  auto contents =
-      this->fileServer.getStorage()->readFile(this->username, filename);
-  ASSERT_TRUE(contents.has_value());
-  ASSERT_EQ(contents.value(), QByteArray("updated by client"));
+  ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
 TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
@@ -166,6 +167,8 @@ TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
       this->client->getStorage()->readFile(this->username, filename);
   ASSERT_TRUE(clientContents.has_value());
   ASSERT_EQ(clientContents.value(), QByteArray("server newer version"));
+
+  ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
 TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
@@ -176,10 +179,7 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
-  auto contents = this->fileServer.getStorage()->readFile(
-      this->username, "subdir/nested/test.txt");
-  ASSERT_TRUE(contents.has_value());
-  ASSERT_EQ(contents.value(), QByteArray("nested content"));
+  ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
 TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
@@ -198,6 +198,7 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
+  ASSERT_TRUE(this->filesystemsAreEqual());
   ASSERT_FALSE(this->fileServer.getStorage()
                    ->readFile(this->username, "test.txt")
                    .has_value());
@@ -223,12 +224,7 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
-  ASSERT_FALSE(this->fileServer.getStorage()
-                   ->readFile(this->username, "subdir/file1.txt")
-                   .has_value());
-  ASSERT_FALSE(this->fileServer.getStorage()
-                   ->readFile(this->username, "subdir/file2.txt")
-                   .has_value());
+  ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
 template <typename Tag> class MerkleSyncTest : public ::testing::Test {
@@ -272,7 +268,8 @@ protected:
                                        .password = "bar",
                                        .syncStrategy = SyncStrategy::Merkle,
                                        .manualTick = true,
-                                       .serverName = serverName});
+                                       .serverName = serverName,
+                                       .deviceName = deviceName});
     return client;
   }
 
@@ -281,6 +278,7 @@ protected:
   QString serverName = "merkle_sync_test";
   FileServer fileServer;
   QString username = "foo";
+  QString deviceName = "merkle_client1";
 };
 
 using MerkleSyncTestImplementations =
@@ -376,4 +374,195 @@ TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   ASSERT_TRUE(result->diffEntries.onlyInLeft.contains({true, "readme.txt"}));
   ASSERT_EQ(result->diffEntries.onlyInRight.size(), 0);
   ASSERT_EQ(result->diffEntries.modified.size(), 0);
+}
+
+template <typename Tag> class MultiDeviceSyncTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    serverDir = QDir(QCoreApplication::applicationDirPath() +
+                     "/test_multidevice_server/" + runId);
+    QDir().mkpath(serverDir.path());
+
+    fileServer.configure(
+        FileServerConfig{.serverName = serverName,
+                         .storage = Tag::makeStorage(serverDir.path())});
+    fileServer.getStorage()->cleanup(username);
+
+    fileServer.start();
+
+    deviceA = makeClient("device-a");
+    deviceB = makeClient("device-b");
+    deviceC = makeClient("device-c");
+  }
+
+  void TearDown() override {
+    if (HasFailure()) {
+      qDebug() << "--- Server tree ---";
+      fileServer.getStorage()->showFileTree(username);
+      qDebug() << "--- Device A tree ---";
+      deviceA->getStorage()->showFileTree(username);
+      qDebug() << "--- Device B tree ---";
+      deviceB->getStorage()->showFileTree(username);
+      qDebug() << "--- Device C tree ---";
+      deviceC->getStorage()->showFileTree(username);
+    }
+    for (const auto &dir : clientDirs) {
+      QDir(dir).removeRecursively();
+    }
+    fileServer.getStorage()->cleanup(username);
+  }
+
+  std::unique_ptr<FileClient> makeClient(const QString &deviceName) {
+    QString dirPath = QCoreApplication::applicationDirPath() +
+                      "/test_multidevice_" + deviceName + "/" + runId;
+    QDir().mkpath(dirPath);
+    clientDirs.append(dirPath);
+
+    auto client = std::make_unique<FileClient>();
+    client->configure(FileClientConfig{
+        .rootDir = dirPath,
+        .username = username,
+        .password = "bar",
+        .syncStrategy = SyncStrategy::Naive,
+        .manualTick = true,
+        .serverName = serverName,
+        .deviceName = deviceName,
+    });
+    client->start();
+    return client;
+  }
+
+  void tickAndWait(FileClient &client) {
+    QCoreApplication::processEvents();
+    client.clientTick();
+    QEventLoop loop;
+    QObject::connect(&client, &FileClient::syncCompleted, &loop,
+                     &QEventLoop::quit);
+    QTimer::singleShot(500, &loop, &QEventLoop::quit);
+    loop.exec();
+  }
+
+  QString runId;
+  QDir serverDir;
+  QList<QString> clientDirs;
+  QString serverName = "multidevice_sync_test";
+  QString username = "foo";
+  FileServer fileServer;
+  std::unique_ptr<FileClient> deviceA;
+  std::unique_ptr<FileClient> deviceB;
+  std::unique_ptr<FileClient> deviceC;
+};
+
+// Not adding yet the merkle strategy stuff
+using MultiDeviceSyncTestImplementations =
+    ::testing::Types<LocalStorageTag, S3StorageTag>;
+
+TYPED_TEST_SUITE(MultiDeviceSyncTest, MultiDeviceSyncTestImplementations);
+
+TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {
+  this->deviceA->writeFile(this->username, "test.txt", "Hello World");
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  ASSERT_TRUE(this->deviceA->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+  ASSERT_TRUE(this->deviceB->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+  ASSERT_TRUE(this->deviceC->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+}
+
+TYPED_TEST(MultiDeviceSyncTest, deviceCanReceiveExistingServerState) {
+  this->fileServer.writeFile(this->username, "test.txt", "preexisting",
+                             QDateTime::currentDateTime());
+  this->tickAndWait(*this->deviceA);
+
+  auto contents =
+      this->deviceA->getStorage()->readFile(this->username, "test.txt");
+  ASSERT_TRUE(contents.has_value());
+  ASSERT_EQ(contents.value(), QByteArray("preexisting"));
+}
+
+TYPED_TEST(MultiDeviceSyncTest, fileInNewDirectoryIsSyncedAcrossDevices) {
+  this->deviceA->writeFile(this->username, "subdir/nested/test.txt",
+                           "nested content");
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  ASSERT_TRUE(this->deviceB->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+  ASSERT_TRUE(this->deviceC->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+}
+
+TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
+  // All three devices have the file
+  this->deviceA->writeFile(this->username, "shared.txt", "hello");
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  ASSERT_TRUE(this->deviceB->getStorage()
+                  ->readFile(this->username, "shared.txt")
+                  .has_value());
+  ASSERT_TRUE(this->deviceC->getStorage()
+                  ->readFile(this->username, "shared.txt")
+                  .has_value());
+
+  // A deletes
+  this->deviceA->deleteFile(this->username, "shared.txt");
+  this->tickAndWait(*this->deviceA);
+
+  // B and C should learn about the deletion
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  ASSERT_FALSE(this->deviceB->getStorage()
+                   ->readFile(this->username, "shared.txt")
+                   .has_value());
+  ASSERT_FALSE(this->deviceC->getStorage()
+                   ->readFile(this->username, "shared.txt")
+                   .has_value());
+}
+
+TYPED_TEST(MultiDeviceSyncTest, directoryDeletionPropagatesAcrossDevices) {
+  this->deviceA->writeFile(this->username, "subdir/file1.txt", "file1");
+  this->deviceA->writeFile(this->username, "subdir/file2.txt", "file2");
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  this->deviceA->deleteFile(this->username, "subdir/file1.txt");
+  this->deviceA->deleteFile(this->username, "subdir/file2.txt");
+  this->tickAndWait(*this->deviceA);
+
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  ASSERT_TRUE(this->deviceB->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+  ASSERT_TRUE(this->deviceC->getStorage()->isEqualTo(
+      *this->fileServer.getStorage(), this->username));
+}
+
+TYPED_TEST(MultiDeviceSyncTest, serverNewerWinsForAllDevices) {
+  QDateTime base = QDateTime::currentDateTime();
+  this->fileServer.writeFile(this->username, "test.txt", "server version",
+                             base.addSecs(10));
+  this->deviceA->writeFile(this->username, "test.txt", "device A older");
+  this->deviceB->writeFile(this->username, "test.txt", "device B older");
+
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+  this->tickAndWait(*this->deviceC);
+
+  for (auto *dev :
+       {this->deviceA.get(), this->deviceB.get(), this->deviceC.get()}) {
+    auto contents = dev->getStorage()->readFile(this->username, "test.txt");
+    ASSERT_TRUE(contents.has_value());
+    ASSERT_EQ(contents.value(), QByteArray("server version"));
+  }
 }

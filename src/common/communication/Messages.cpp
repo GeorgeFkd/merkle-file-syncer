@@ -116,7 +116,7 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
 
   QJsonObject obj = QJsonDocument::fromJson(data).object();
   QString type = obj["type"].toString();
-  
+
   if (type == "auth")
     return AuthMessage::deserialize(obj);
   if (type == "auth_response")
@@ -125,6 +125,10 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return SyncRequestMessage::deserialize(obj);
   if (type == "merkle_sync")
     return MerkleSyncMessage::deserialize(obj);
+  if (type == "list_request")
+    return ListRequestMessage::deserialize(obj);
+  if (type == "list_response")
+    return ListResponseMessage::deserialize(obj);
 
   return nullptr;
 }
@@ -213,6 +217,61 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
 
   return msg;
 }
+
+QByteArray ListRequestMessage::serialize() const {
+  QJsonObject obj;
+  obj["type"] = "list_request";
+  obj["token"] = token;
+  obj["directory"] = directory;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+
+std::unique_ptr<ListRequestMessage>
+ListRequestMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<ListRequestMessage>();
+  msg->token = obj["token"].toString();
+  msg->directory = obj["directory"].toString();
+  return msg;
+}
+
+MessageType ListRequestMessage::type() const {
+  return MessageType::ListRequest;
+}
+
+MessageType ListResponseMessage::type() const {
+  return MessageType::ListResponse;
+}
+
+QByteArray ListResponseMessage::serialize() const {
+  QJsonObject obj;
+  obj["type"] = "list_response";
+  QJsonArray entriesArray;
+  for (const auto &entry : entries) {
+    QJsonObject entryObj;
+    entryObj["path"] = entry.path;
+    entryObj["mtime"] = entry.mtime.toString(Qt::ISODate);
+    entryObj["deleted"] = entry.deleted;
+    entriesArray.append(entryObj);
+  }
+  obj["entries"] = entriesArray;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+
+std::unique_ptr<ListResponseMessage>
+ListResponseMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<ListResponseMessage>();
+  for (const auto &val : obj["entries"].toArray()) {
+    QJsonObject entryObj = val.toObject();
+    FileEntry entry;
+    entry.path = entryObj["path"].toString();
+    entry.mtime =
+        QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODate);
+    entry.deleted = entryObj["deleted"].toBool();
+    msg->entries.append(entry);
+  }
+  return msg;
+}
+
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   debug << "MerkleSyncMessage {";
   debug << "token: " << msg.token;
@@ -232,4 +291,3 @@ QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   debug << "]}";
   return debug;
 }
-

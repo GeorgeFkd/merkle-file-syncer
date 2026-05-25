@@ -15,3 +15,21 @@ void FileStorage::showFileTree(const QString &user) const {
     qDebug().noquote() << "  " << indent << name;
   }
 }
+
+bool FileStorage::isEqualTo(const FileStorage &other,
+                                    const QString &user) const {
+  auto a = listFiles(user);
+  auto b = other.listFiles(user);
+  std::sort(a.begin(), a.end());
+  std::sort(b.begin(), b.end());
+  if (a != b)
+    return false;
+
+  for (const auto &path : a) {
+    auto contentsA = readFile(user, path);
+    auto contentsB = other.readFile(user, path);
+    if (contentsA != contentsB)
+      return false;
+  }
+  return true;
+}

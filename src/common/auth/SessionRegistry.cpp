@@ -49,3 +49,11 @@ std::optional<QString> SessionRegistry::getUsername(const QString &token) const 
     return std::nullopt;
   return it.value().username;
 }
+
+std::optional<QString> SessionRegistry::getDeviceName(const QString &token) const {
+  auto it = sessions.constFind(token);
+  if (it == sessions.constEnd())
+    return std::nullopt;
+  return it.value().deviceName;
+}
+

@@ -37,6 +37,8 @@ private:
   void handleUnrecognized(QLocalSocket *socket, Message *msg);
   void handleSyncRequest(QLocalSocket *socket, SyncRequestMessage *msg);
   void handleMerkleSyncRequest(QLocalSocket *socket, MerkleSyncMessage *msg);
+  void handleListRequest(QLocalSocket *socket,ListRequestMessage *msg);
+
   void handleWriteResponse(SyncRequestMessage *msg);
   void handleDeleteResponse(SyncRequestMessage *msg);
   void setupNewSocketConnection(QLocalSocket *socket);

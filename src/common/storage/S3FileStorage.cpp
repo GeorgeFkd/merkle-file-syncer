@@ -84,6 +84,7 @@ QList<QString> S3FileStorage::listFiles(const QString &user) const {
     minio::s3::ListObjectsArgs args;
     args.bucket = bucket;
     args.prefix = user.toStdString() + "/";
+    args.recursive = true;
     auto resp = client->ListObjects(args);
     for (; resp; resp++) {
         auto item = *resp;

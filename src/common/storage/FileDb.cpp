@@ -35,3 +35,22 @@ std::optional<QString> FileDb::readUserDirectory(const QString &user, const QStr
 void FileDb::storeUser(const QString &user, const QString &password, const QString &rootDirectory) {
     users[user] = {password, rootDirectory};
 }
+
+
+void FileDb::markDeleted(const QString &file, const QDateTime &deletedAt) {
+    fileMtimes.remove(file);
+    tombstones[file] = deletedAt;
+}
+
+bool FileDb::isDeleted(const QString &file) const {
+    return tombstones.contains(file);
+}
+
+std::optional<QDateTime> FileDb::deletedAt(const QString &file) const {
+    if (tombstones.contains(file)) return tombstones[file];
+    return std::nullopt;
+}
+
+QHash<QString, QDateTime> FileDb::allTombstones() const {
+    return tombstones;
+}

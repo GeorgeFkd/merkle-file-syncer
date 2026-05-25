@@ -13,7 +13,9 @@ enum class MessageType {
   ClientAuth,
   ServerAuthResponse,
   SyncRequest,
-  MerkleSync
+  MerkleSync,
+  ListRequest,
+  ListResponse
 };
 
 class Message {
@@ -92,3 +94,26 @@ public:
   static std::unique_ptr<SyncRequestMessage>
   deserialize(const QJsonObject &obj);
 };
+
+struct FileEntry {
+  QString path;
+  QDateTime mtime;
+  bool deleted = false;
+};
+
+class ListRequestMessage : public Message {
+public:
+  QString directory; //if empty we list all of the user files
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<ListRequestMessage> deserialize(const QJsonObject &obj);
+};
+
+class ListResponseMessage : public Message {
+public:
+  QList<FileEntry> entries;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<ListResponseMessage> deserialize(const QJsonObject &obj);
+};
+
