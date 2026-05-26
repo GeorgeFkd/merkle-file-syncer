@@ -109,12 +109,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     for (const auto &entry : msg->entries) {
       if (entry.deleted)
         continue;
-      if (database.readMtime(entry.path).has_value() &&
-          !merkleTree->find(entry.path.toStdString()).has_value()) {
-        stageDeleteFor(entry.path);
-      } else {
-        stageDownloadFor(entry.path);
-      }
+      resolveServerHasFileClientDoesnt(entry.path);
     }
 
     pendingDirectoryRequests--;
@@ -207,45 +202,67 @@ void FileClient::checkSyncCompletionAndUnlock() {
     }
   }
 }
+
 void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
   QString path = QString::fromStdString(msg->path);
-  if (msg->operationStatus == FileOperationStatus::Done) {
+  switch (msg->operationStatus) {
+  case FileOperationStatus::Done: {
+    qDebug() << "Write acked for:" << path;
     auto localMtime = fileStorage->getMtime(username, path);
     if (localMtime.has_value()) {
       database.updateFileMtime(path, localMtime.value());
+    } else {
+      qDebug() << "handleWriteResponse: no local mtime after write for" << path;
     }
-    return;
+    break;
   }
-  if (msg->operationStatus == FileOperationStatus::ServerHasNewer) {
+  case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server has newer version of:" << path;
-    if (msg->contents.isEmpty())
-      return;
-    if (!writeFile(username, path, msg->contents)) {
-      qDebug() << "Failed to write server version to client";
-      return;
-    }
-    auto localMtime = fileStorage->getMtime(username, path);
-    if (localMtime.has_value()) {
-      database.updateFileMtime(path, localMtime.value());
-    }
+    applyServerVersion(path, msg->contents);
+    break;
+  }
+  default: {
+    qDebug() << "handleWriteResponse: unhandled status for" << path;
+    break;
+  }
   }
 }
 
 void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
-  if (msg->operationStatus == FileOperationStatus::Done) {
-    qDebug() << "For file: " << msg->path << " received status: " << "Done";
-    database.removeFileMtime(QString::fromStdString(msg->path));
+  QString path = QString::fromStdString(msg->path);
+  switch (msg->operationStatus) {
+  case FileOperationStatus::Done: {
+    qDebug() << "Delete acked for:" << path;
+    database.removeFileMtime(path);
+    break;
   }
-  if (msg->operationStatus == FileOperationStatus::ServerHasNewer) {
-    qDebug() << "Server rejected deletion, restoring:"
-             << QString::fromStdString(msg->path);
-    if (msg->contents.isEmpty())
-      return;
-    if (!writeFile(username, QString::fromStdString(msg->path),
-                   msg->contents)) {
-      qDebug() << "Failed to restore file from server";
-      return;
-    }
+  case FileOperationStatus::ServerHasNewer: {
+    qDebug() << "Server rejected deletion, restoring:" << path;
+    applyServerVersion(path, msg->contents);
+    break;
+  }
+  default: {
+    qDebug() << "handleDeleteResponse: unhandled status for" << path;
+    break;
+  }
+  }
+}
+
+void FileClient::applyServerVersion(const QString &path,
+                                    const QByteArray &contents) {
+  if (contents.isEmpty()) {
+    qDebug() << "applyServerVersion: empty contents for" << path;
+    return;
+  }
+  if (!writeFile(username, path, contents)) {
+    qDebug() << "applyServerVersion: failed to write" << path;
+    return;
+  }
+  auto localMtime = fileStorage->getMtime(username, path);
+  if (localMtime.has_value()) {
+    database.updateFileMtime(path, localMtime.value());
+  } else {
+    qDebug() << "applyServerVersion: no local mtime after write for" << path;
   }
 }
 
@@ -299,64 +316,45 @@ void FileClient::flushOutboundCommands() {
 }
 
 void FileClient::stageUploadFor(const QString &path) {
-  stageNewFilesForSending({path});
+  auto contents = fileStorage->readFile(username, path);
+  if (!contents.has_value()) {
+    qDebug() << "Could not read file: " << path;
+    return;
+  }
+  auto mtime = fileStorage->getMtime(username, path);
+  commandsToSend.insert(path, buildSyncRequest(path, FileOperationType::Write,
+                                               contents.value(), mtime));
 }
 
 void FileClient::stageDownloadFor(const QString &path) {
-  auto localMtime = database.readMtime(path);
-  SyncRequestMessage msg;
-  msg.token = token;
-  msg.path = path.toStdString();
-  msg.contents = {};
-  msg.mtime = localMtime.has_value()
-                  ? localMtime.value().toString(Qt::ISODate).toStdString()
-                  : "";
-  msg.operationType = FileOperationType::Write;
-  msg.operationStatus = FileOperationStatus::DoIt;
-  commandsToSend.insert(path, msg);
+  auto mtime = database.readMtime(path);
+  commandsToSend.insert(
+      path, buildSyncRequest(path, FileOperationType::Delete, {}, mtime));
 }
 
 void FileClient::stageConflictResolution(const QString &path) {
   stageUploadFor(path);
 }
 
+void FileClient::resolveServerHasFileClientDoesnt(const QString &path) {
+  if (database.readMtime(path).has_value() &&
+      !merkleTree->find(path.toStdString()).has_value()) {
+    stageDeleteFor(path);
+  } else {
+    stageDownloadFor(path);
+  }
+}
+
 void FileClient::stageNewFilesForSending(const QList<QString> &newFiles) {
-  for (const auto &relativePath : newFiles) {
-    auto contents = fileStorage->readFile(username, relativePath);
-    if (!contents.has_value()) {
-      qDebug() << "Failed to read file:" << relativePath;
-      continue;
-    }
-    auto mtime = fileStorage->getMtime(username, relativePath);
-    SyncRequestMessage msg;
-    qDebug() << "Token of client is: " << token;
-    msg.token = token;
-    msg.path = relativePath.toStdString();
-    msg.contents = contents.value();
-    msg.mtime = mtime.has_value()
-                    ? mtime.value().toString(Qt::ISODate).toStdString()
-                    : "";
-    msg.operationType = FileOperationType::Write;
-    msg.operationStatus = FileOperationStatus::DoIt;
-    commandsToSend.insert(relativePath, msg);
+  for (const auto &p : newFiles) {
+    stageUploadFor(p);
   }
 }
 
 void FileClient::stageDeletedFilesForSending(
     const QList<QString> &deletedFiles) {
-  for (const auto &trackedPath : deletedFiles) {
-    auto mtime = database.readMtime(trackedPath);
-    SyncRequestMessage msg;
-    qDebug() << "Token of client is: " << token;
-    msg.token = token;
-    msg.path = trackedPath.toStdString();
-    msg.contents = {};
-    msg.mtime = mtime.has_value()
-                    ? mtime.value().toString(Qt::ISODate).toStdString()
-                    : "";
-    msg.operationType = FileOperationType::Delete;
-    msg.operationStatus = FileOperationStatus::DoIt;
-    commandsToSend.insert(trackedPath, msg);
+  for (const auto &p : deletedFiles) {
+    stageDeleteFor(p);
   }
 }
 
@@ -538,6 +536,22 @@ void FileClient::stageDeleteFor(const QString &path) {
   commandsToSend.insert(path, msg);
 }
 
+SyncRequestMessage
+FileClient::buildSyncRequest(const QString &path, FileOperationType op,
+                             const QByteArray &contents,
+                             const std::optional<QDateTime> &mtime) {
+  SyncRequestMessage msg;
+  msg.token = token;
+  msg.path = path.toStdString();
+  msg.contents = contents;
+  msg.mtime = mtime.has_value()
+                  ? mtime.value().toString(Qt::ISODate).toStdString()
+                  : "";
+  msg.operationType = op;
+  msg.operationStatus = FileOperationStatus::DoIt;
+  return msg;
+}
+
 void FileClient::handleNegotiationCompleted() {
   qDebug() << "Now starting to sync files";
   currentlyNegotiatingFileDiffs = false;
@@ -561,12 +575,7 @@ void FileClient::handleNegotiationCompleted() {
       requestDirectoryList(path);
       continue;
     }
-    if (database.readMtime(path).has_value() &&
-        !merkleTree->find(path.toStdString()).has_value()) {
-      stageDeleteFor(path);
-    } else {
-      stageDownloadFor(path);
-    }
+    resolveServerHasFileClientDoesnt(path);
   }
   for (const auto &path : negotiationState.diffEntries.modified) {
     // modified should only contain files at this point — directories

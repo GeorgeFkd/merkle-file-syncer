@@ -9,14 +9,13 @@
 #include <QString>
 #include <QTimer>
 
-
 // FileCommand: Operation Type,Path,Contents,Mtime
 
-struct NodesDiff{
-  //the bool is to signal whether it is a file or not(true -> file, false ->directory)
-  //so we can later ask the server for whole directories
-  QList<QPair<bool,QString>> onlyInLeft;
-  QList<QPair<bool,QString>> onlyInRight;
+struct NodesDiff {
+  // the bool is to signal whether it is a file or not(true -> file, false
+  // ->directory) so we can later ask the server for whole directories
+  QList<QPair<bool, QString>> onlyInLeft;
+  QList<QPair<bool, QString>> onlyInRight;
   QList<QString> modified;
 };
 
@@ -26,8 +25,12 @@ struct NegotiationState {
 };
 
 enum class SyncStrategy { Naive, Merkle };
-enum class ClientState {Disconnected,Connected,Authenticated,Authenticating};
-
+enum class ClientState {
+  Disconnected,
+  Connected,
+  Authenticated,
+  Authenticating
+};
 
 struct FileClientConfig {
   QString rootDir;
@@ -51,7 +54,8 @@ public:
   LocalFileStorage *getStorage();
   void start();
   NegotiationState *getNegotiationState();
-  bool writeFile(const QString& user,const QString &path, const QByteArray &contents);
+  bool writeFile(const QString &user, const QString &path,
+                 const QByteArray &contents);
   bool deleteFile(const QString &user, const QString &path);
 
 Q_SIGNALS:
@@ -66,12 +70,17 @@ private:
   void stageDeletedFilesForSending(const QList<QString> &files);
   void sendAuthRequest();
   QString getDeviceName();
-  void stageDownloadFor(const QString& path);
-  void stageDeleteFor(const QString& path);
-  void stageConflictResolution(const QString& path);
-  void stageUploadFor(const QString& path);
-  void stageDirectoryUpload(const QString& dirPath);
-  void requestDirectoryList(const QString& dirPath);
+  void stageDownloadFor(const QString &path);
+  void stageDeleteFor(const QString &path);
+  void stageConflictResolution(const QString &path);
+  void stageUploadFor(const QString &path);
+  void stageDirectoryUpload(const QString &dirPath);
+  void requestDirectoryList(const QString &dirPath);
+  void resolveServerHasFileClientDoesnt(const QString &path);
+  SyncRequestMessage buildSyncRequest(const QString &path, FileOperationType op,
+                                      const QByteArray &contents,
+                                      const std::optional<QDateTime> &mtime);
+  void applyServerVersion(const QString& path,const QByteArray& contents);
 
   QLocalSocket *socket = nullptr;
 
@@ -116,6 +125,5 @@ private:
   bool pendingTick = false;
   QString token;
   ClientState state = ClientState::Disconnected;
-  QHash<QString,SyncRequestMessage> commandsToSend;
-  
+  QHash<QString, SyncRequestMessage> commandsToSend;
 };
