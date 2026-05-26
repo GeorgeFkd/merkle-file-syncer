@@ -1,5 +1,4 @@
 #pragma once
-
 #include "FileDb.h"
 #include "FileHasher.h"
 #include "LocalFileStorage.h"
@@ -8,8 +7,6 @@
 #include <QLocalSocket>
 #include <QString>
 #include <QTimer>
-
-// FileCommand: Operation Type,Path,Contents,Mtime
 
 struct NodesDiff {
   // the bool is to signal whether it is a file or not(true -> file, false
@@ -25,11 +22,12 @@ struct NegotiationState {
 };
 
 enum class SyncStrategy { Naive, Merkle };
+
 enum class ClientState {
   Disconnected,
   Connected,
+  Authenticating,
   Authenticated,
-  Authenticating
 };
 
 struct FileClientConfig {
@@ -48,15 +46,18 @@ class FileClient : public QObject {
 public:
   FileClient();
   ~FileClient();
-  void setupConnections();
+
   void configure(const FileClientConfig &config);
-  void clientTick();
-  LocalFileStorage *getStorage();
   void start();
-  NegotiationState *getNegotiationState();
+  void clientTick();
+  void setupConnections();
+
   bool writeFile(const QString &user, const QString &path,
                  const QByteArray &contents);
   bool deleteFile(const QString &user, const QString &path);
+
+  LocalFileStorage *getStorage();
+  NegotiationState *getNegotiationState();
 
 Q_SIGNALS:
   void syncCompleted();
@@ -65,65 +66,76 @@ Q_SIGNALS:
   void outboundFileCommandsReady();
 
 private:
+  // --- Identity / config ---
+  QString username;
+  QString password;
+  QString deviceName;
+  QString serverName;
+  SyncStrategy syncStrategy;
+
+  // --- Connection / auth state ---
+  QLocalSocket *socket = nullptr;
+  ClientState state = ClientState::Disconnected;
+  QString token;
+  QByteArray buffer;
   void connectToServer();
-  void stageNewFilesForSending(const QList<QString> &files);
-  void stageDeletedFilesForSending(const QList<QString> &files);
   void sendAuthRequest();
   QString getDeviceName();
-  void stageDownloadFor(const QString &path);
-  void stageDeleteFor(const QString &path);
-  void stageConflictResolution(const QString &path);
-  void stageUploadFor(const QString &path);
-  void stageDirectoryUpload(const QString &dirPath);
-  void requestDirectoryList(const QString &dirPath);
-  void resolveServerHasFileClientDoesnt(const QString &path);
-  SyncRequestMessage buildSyncRequest(const QString &path, FileOperationType op,
-                                      const QByteArray &contents,
-                                      const std::optional<QDateTime> &mtime);
-  void applyServerVersion(const QString& path,const QByteArray& contents);
+  void handleAuthResponse(AuthResponseMessage *msg);
 
-  QLocalSocket *socket = nullptr;
-
+  // --- Ticking ---
   QTimer timer;
   unsigned int tickIntervalMs;
   bool shouldUseTimer = true;
-
-  void handleAuthResponse(AuthResponseMessage *msg);
-  void handleSyncResponse(SyncRequestMessage *msg);
-  void handleMerkleSyncResponse(MerkleSyncMessage *msg);
-  void handleWriteResponse(SyncRequestMessage *msg);
-  void handleListResponse(ListResponseMessage *msg);
-  void handleDeleteResponse(SyncRequestMessage *msg);
-  void handleUnrecognized(Message *msg);
-
-  QList<QString> discoverNewFiles();
-  QList<QString> discoverDeletedFiles();
-  void flushOutboundCommands();
+  bool pendingTick = false;
+  bool currentlyDoingSyncOps = false;
+  void naiveTick();
+  void merkleTick();
   void checkSyncCompletionAndUnlock();
 
-  void merkleTick();
-  void handleNegotiationCompleted();
-  void naiveTick();
-  bool currentlyDoingSyncOps = false;
+  // --- Local state (storage + DB + merkle tree) ---
+  std::unique_ptr<LocalFileStorage> fileStorage;
+  FileDb database;
+  std::unique_ptr<MerkleTree> merkleTree;
+  QList<QString> discoverNewFiles();
+  QList<QString> discoverDeletedFiles();
+
+  // --- Outbound command staging ---
+  QHash<QString, SyncRequestMessage> commandsToSend;
+  int pendingMessages = 0;
+  void flushOutboundCommands();
+  SyncRequestMessage buildSyncRequest(const QString &path, FileOperationType op,
+                                      const QByteArray &contents,
+                                      const std::optional<QDateTime> &mtime);
+  void stageUploadFor(const QString &path);
+  void stageDownloadFor(const QString &path);
+  void stageDeleteFor(const QString &path);
+  void stageConflictResolution(const QString &path);
+  void stageDirectoryUpload(const QString &dirPath);
+  void stageNewFilesForSending(const QList<QString> &files);
+  void stageDeletedFilesForSending(const QList<QString> &files);
+  void resolveServerHasFileClientDoesnt(const QString &path);
+
+  // --- Server file listing (naive pull + merkle apply expansion) ---
   bool awaitingListResponse = false;
   bool inMerkleApply = false;
   int pendingDirectoryRequests = 0;
-  int pendingMessages = 0;
-  QString username, password;
-  QByteArray buffer;
-  std::unique_ptr<LocalFileStorage> fileStorage;
-  FileDb database;
-  SyncStrategy syncStrategy;
-  std::unique_ptr<MerkleTree> merkleTree;
-  QString serverName;
-  QString deviceName;
+  void requestDirectoryList(const QString &dirPath);
+  void handleListResponse(ListResponseMessage *msg);
 
+  // --- Merkle negotiation ---
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;
   NegotiationState negotiationState;
+  void handleMerkleSyncResponse(MerkleSyncMessage *msg);
+  void handleNegotiationCompleted();
 
-  bool pendingTick = false;
-  QString token;
-  ClientState state = ClientState::Disconnected;
-  QHash<QString, SyncRequestMessage> commandsToSend;
+  // --- Sync response handling ---
+  void handleSyncResponse(SyncRequestMessage *msg);
+  void handleWriteResponse(SyncRequestMessage *msg);
+  void handleDeleteResponse(SyncRequestMessage *msg);
+  void applyServerVersion(const QString &path, const QByteArray &contents);
+
+  // --- Misc ---
+  void handleUnrecognized(Message *msg);
 };
