@@ -66,6 +66,13 @@ private:
   void stageDeletedFilesForSending(const QList<QString> &files);
   void sendAuthRequest();
   QString getDeviceName();
+  void stageDownloadFor(const QString& path);
+  void stageDeleteFor(const QString& path);
+  void stageConflictResolution(const QString& path);
+  void stageUploadFor(const QString& path);
+  void stageDirectoryUpload(const QString& dirPath);
+  void requestDirectoryList(const QString& dirPath);
+
   QLocalSocket *socket = nullptr;
 
   QTimer timer;
@@ -90,6 +97,8 @@ private:
   void naiveTick();
   bool currentlyDoingSyncOps = false;
   bool awaitingListResponse = false;
+  bool inMerkleApply = false;
+  int pendingDirectoryRequests = 0;
   int pendingMessages = 0;
   QString username, password;
   QByteArray buffer;

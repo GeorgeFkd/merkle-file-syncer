@@ -159,6 +159,7 @@ void FileServer::handleDeleteRequest(
     return;
   }
   database.markDeleted(storageKey, QDateTime::currentDateTime());
+  getUserTree(username)->deleteFile(msg->path); 
   response.operationStatus = FileOperationStatus::Done;
 }
 void FileServer::trySendNewerFile(SyncRequestMessage &response,
@@ -198,7 +199,8 @@ void FileServer::handleWriteRequest(
     response.operationStatus = FileOperationStatus::Error;
     return;
   }
-
+  
+  getUserTree(username)->addFile(QString::fromStdString(msg->path).toStdString());
   database.updateFileMtime(storageKey, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return;

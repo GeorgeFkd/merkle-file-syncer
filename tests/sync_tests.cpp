@@ -53,7 +53,7 @@ struct S3MerkleTag {
   static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
 };
 
-using SyncTestImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
+using SyncTestImplementations = ::testing::Types<S3MerkleTag,S3NaiveTag,LocalMerkleTag,LocalNaiveTag>;
 
 template <typename Tag> class SyncTest : public ::testing::Test {
 protected:
@@ -68,7 +68,7 @@ protected:
 
     fileServer.configure(
         FileServerConfig{.serverName = serverName,
-                         .storage = Tag::makeStorage(serverDir->path())});
+                         .storage = Tag::Storage::makeStorage(serverDir->path())});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
 
@@ -76,7 +76,7 @@ protected:
     client->configure(FileClientConfig{.rootDir = clientDir->path(),
                                        .username = username,
                                        .password = "bar",
-                                       .syncStrategy = SyncStrategy::Naive,
+                                       .syncStrategy = Tag::strategy,
                                        .manualTick = true,
                                        .serverName = serverName,
                                        .deviceName = deviceName});

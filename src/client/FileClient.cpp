@@ -105,9 +105,31 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
   qDebug() << "Handling list response from server with" << msg->entries.size()
            << "entries";
 
-  //Apply tombstones — server says these files are deleted
+  if (inMerkleApply) {
+    for (const auto &entry : msg->entries) {
+      if (entry.deleted)
+        continue;
+      if (database.readMtime(entry.path).has_value() &&
+          !merkleTree->find(entry.path.toStdString()).has_value()) {
+        stageDeleteFor(entry.path);
+      } else {
+        stageDownloadFor(entry.path);
+      }
+    }
+
+    pendingDirectoryRequests--;
+    if (pendingDirectoryRequests == 0) {
+      inMerkleApply = false;
+      Q_EMIT outboundFileCommandsReady();
+      checkSyncCompletionAndUnlock();
+    }
+    return;
+  }
+
+  // Apply tombstones — server says these files are deleted
   for (const auto &entry : msg->entries) {
-    if (!entry.deleted) continue;
+    if (!entry.deleted)
+      continue;
     auto local = fileStorage->readFile(username, entry.path);
     if (local.has_value()) {
       fileStorage->deleteFile(username, entry.path);
@@ -118,11 +140,12 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
   // Build a set of server paths and a lookup for mtimes
   QHash<QString, QDateTime> serverFiles;
   for (const auto &entry : msg->entries) {
-    if(entry.deleted) continue;
+    if (entry.deleted)
+      continue;
     serverFiles.insert(entry.path, entry.mtime);
   }
 
-  //Find server-only and server-newer files -> request download
+  // Find server-only and server-newer files -> request download
   for (auto it = serverFiles.cbegin(); it != serverFiles.cend(); ++it) {
     const QString &path = it.key();
     const QDateTime &serverMtime = it.value();
@@ -153,13 +176,13 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     }
   }
 
-  //Run existing local discovery for uploads and deletes
+  // Run existing local discovery for uploads and deletes
   auto newFiles = discoverNewFiles();
   auto deletedFiles = discoverDeletedFiles();
   stageNewFilesForSending(newFiles);
   stageDeletedFilesForSending(deletedFiles);
 
-  //Send everything
+  // Send everything
   Q_EMIT outboundFileCommandsReady();
   checkSyncCompletionAndUnlock();
 }
@@ -211,6 +234,7 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
 void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   if (msg->operationStatus == FileOperationStatus::Done) {
     qDebug() << "For file: " << msg->path << " received status: " << "Done";
+    database.removeFileMtime(QString::fromStdString(msg->path));
   }
   if (msg->operationStatus == FileOperationStatus::ServerHasNewer) {
     qDebug() << "Server rejected deletion, restoring:"
@@ -274,6 +298,28 @@ void FileClient::flushOutboundCommands() {
   commandsToSend.clear();
 }
 
+void FileClient::stageUploadFor(const QString &path) {
+  stageNewFilesForSending({path});
+}
+
+void FileClient::stageDownloadFor(const QString &path) {
+  auto localMtime = database.readMtime(path);
+  SyncRequestMessage msg;
+  msg.token = token;
+  msg.path = path.toStdString();
+  msg.contents = {};
+  msg.mtime = localMtime.has_value()
+                  ? localMtime.value().toString(Qt::ISODate).toStdString()
+                  : "";
+  msg.operationType = FileOperationType::Write;
+  msg.operationStatus = FileOperationStatus::DoIt;
+  commandsToSend.insert(path, msg);
+}
+
+void FileClient::stageConflictResolution(const QString &path) {
+  stageUploadFor(path);
+}
+
 void FileClient::stageNewFilesForSending(const QList<QString> &newFiles) {
   for (const auto &relativePath : newFiles) {
     auto contents = fileStorage->readFile(username, relativePath);
@@ -300,7 +346,6 @@ void FileClient::stageDeletedFilesForSending(
     const QList<QString> &deletedFiles) {
   for (const auto &trackedPath : deletedFiles) {
     auto mtime = database.readMtime(trackedPath);
-    database.removeFileMtime(trackedPath);
     SyncRequestMessage msg;
     qDebug() << "Token of client is: " << token;
     msg.token = token;
@@ -353,7 +398,7 @@ bool FileClient::writeFile(const QString &user, const QString &path,
     qDebug() << "Failed to write file on client:" << path;
     return false;
   }
-  
+
   // we should not update the database, let the client discover it.
   if (merkleTree) {
     merkleTree->addFile(path.toStdString());
@@ -461,6 +506,38 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   Q_EMIT negotiationCompleted();
 }
 
+void FileClient::stageDirectoryUpload(const QString &dirPath) {
+  // Walk all local files whose path is under dirPath
+  auto files = fileStorage->listFiles(username);
+  for (const auto &path : files) {
+    if (path == dirPath || path.startsWith(dirPath + "/")) {
+      stageUploadFor(path);
+    }
+  }
+}
+
+void FileClient::requestDirectoryList(const QString &dirPath) {
+  ListRequestMessage req;
+  req.token = token;
+  req.directory = dirPath;
+  pendingDirectoryRequests++;
+  MessageProtocol::sendMessage(socket, req);
+}
+
+void FileClient::stageDeleteFor(const QString &path) {
+  auto mtime = database.readMtime(path);
+  SyncRequestMessage msg;
+  msg.token = token;
+  msg.path = path.toStdString();
+  msg.contents = {};
+  msg.mtime = mtime.has_value()
+                  ? mtime.value().toString(Qt::ISODate).toStdString()
+                  : "";
+  msg.operationType = FileOperationType::Delete;
+  msg.operationStatus = FileOperationStatus::DoIt;
+  commandsToSend.insert(path, msg);
+}
+
 void FileClient::handleNegotiationCompleted() {
   qDebug() << "Now starting to sync files";
   currentlyNegotiatingFileDiffs = false;
@@ -468,6 +545,40 @@ void FileClient::handleNegotiationCompleted() {
   qDebug() << "(L) " << negotiationState.diffEntries.onlyInLeft;
   qDebug() << "(R) " << negotiationState.diffEntries.onlyInRight;
   qDebug() << "(M) " << negotiationState.diffEntries.modified;
+
+  inMerkleApply = true;
+  pendingDirectoryRequests = 0;
+
+  // File-level cases first; directories deferred for next iteration
+  for (const auto &[isFile, path] : negotiationState.diffEntries.onlyInLeft) {
+    if (isFile)
+      stageUploadFor(path);
+    else
+      stageDirectoryUpload(path);
+  }
+  for (const auto &[isFile, path] : negotiationState.diffEntries.onlyInRight) {
+    if (!isFile) {
+      requestDirectoryList(path);
+      continue;
+    }
+    if (database.readMtime(path).has_value() &&
+        !merkleTree->find(path.toStdString()).has_value()) {
+      stageDeleteFor(path);
+    } else {
+      stageDownloadFor(path);
+    }
+  }
+  for (const auto &path : negotiationState.diffEntries.modified) {
+    // modified should only contain files at this point — directories
+    // were resolved during negotiation via directoriesToCheckWithServer
+    stageConflictResolution(path);
+  }
+
+  if (pendingDirectoryRequests == 0) {
+    inMerkleApply = false;
+    Q_EMIT outboundFileCommandsReady();
+    checkSyncCompletionAndUnlock();
+  }
 }
 
 void FileClient::merkleTick() {
