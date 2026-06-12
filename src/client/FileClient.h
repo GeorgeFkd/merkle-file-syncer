@@ -31,6 +31,7 @@ enum class ClientState {
 };
 
 struct FileClientConfig {
+  TransportProtocol protocol;
   QString rootDir;
   QString username;
   QString password;

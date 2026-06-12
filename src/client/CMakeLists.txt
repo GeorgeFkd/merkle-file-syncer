@@ -1,4 +1,12 @@
-qt_add_library(merkle_client_lib STATIC FileClient.cpp FileClient.h ClientTransport.h LocalClientTransport.h LocalClientTransport.cpp)
+qt_add_library(merkle_client_lib STATIC 
+  FileClient.cpp 
+  FileClient.h 
+  ClientTransport.h 
+  LocalClientTransport.h 
+  LocalClientTransport.cpp
+  TcpClientTransport.h
+  TcpClientTransport.cpp
+)
 target_include_directories(
   merkle_client_lib
   PUBLIC ${CMAKE_SOURCE_DIR}/src/common/communication

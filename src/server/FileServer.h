@@ -8,7 +8,10 @@
 #include <QLocalSocket>
 #include "ServerTransport.h"
 
+
+
 struct FileServerConfig {
+  TransportProtocol protocol;
   QString serverName;
   std::unique_ptr<FileStorage> storage;
 };

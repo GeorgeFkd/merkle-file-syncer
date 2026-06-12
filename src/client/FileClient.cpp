@@ -2,6 +2,7 @@
 #include "LocalClientTransport.h"
 #include "LocalFileStorage.h"
 #include "Messages.h"
+#include "TcpClientTransport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <memory>
@@ -31,7 +32,15 @@ void FileClient::configure(const FileClientConfig &config) {
   database.storeUser(username, password, fileStorage->rootPath(username));
   deviceName = config.deviceName;
 
-  transport = std::make_unique<LocalClientTransport>();
+  switch (config.protocol) {
+  case TransportProtocol::LocalSocket:
+    transport = std::make_unique<LocalClientTransport>();
+    break;
+  case TransportProtocol::Tcp:
+    transport = std::make_unique<TcpClientTransport>();
+    break;
+  }
+
   transport->configure(serverName);
 }
 
@@ -121,8 +130,7 @@ void FileClient::dispatch(Message *msg) {
   }
 }
 
-FileClient::~FileClient() {
-}
+FileClient::~FileClient() {}
 
 void FileClient::handleListResponse(ListResponseMessage *msg) {
   awaitingListResponse = false;
@@ -131,9 +139,21 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
 
   if (inMerkleApply) {
     for (const auto &entry : msg->entries) {
-      if (entry.deleted)
+      if (!entry.deleted) {
+        resolveServerHasFileClientDoesnt(entry.path);
         continue;
-      resolveServerHasFileClientDoesnt(entry.path);
+      }
+
+      // server says this file is deleted — apply locally
+      auto local = fileStorage->readFile(username, entry.path);
+      if (local.has_value()) {
+        fileStorage->deleteFile(username, entry.path);
+        qDebug() << "Applied server tombstone for:" << entry.path;
+      }
+      if (merkleTree) {
+        merkleTree->deleteFile(entry.path.toStdString());
+      }
+      database.removeFileMtime(entry.path);
     }
 
     pendingDirectoryRequests--;
@@ -353,7 +373,7 @@ void FileClient::stageUploadFor(const QString &path) {
 void FileClient::stageDownloadFor(const QString &path) {
   auto mtime = database.readMtime(path);
   commandsToSend.insert(
-      path, buildSyncRequest(path, FileOperationType::Delete, {}, mtime));
+      path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
 }
 
 void FileClient::stageConflictResolution(const QString &path) {
@@ -653,8 +673,8 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   } else {
     qDebug() << "Auth failed: " << msg->error;
     state = ClientState::Disconnected;
-    //if we want explicit disconnect on auth failure should add a disconnect method 
-    //to the clienttransport abstraction
+    // if we want explicit disconnect on auth failure should add a disconnect
+    // method to the clienttransport abstraction
   }
 }
 

@@ -9,6 +9,8 @@
 #include <functional>
 #include <QJsonArray>
 
+enum class TransportProtocol {LocalSocket,Tcp};
+
 enum class MessageType {
   ClientAuth,
   ServerAuthResponse,

@@ -13,6 +13,7 @@
 #include <QUuid>
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
+#include <QRandomGenerator>
 
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -33,6 +34,55 @@ struct S3StorageTag {
     return s;
   }
 };
+
+struct LocalNaiveLocalSocketTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+  static constexpr TransportProtocol protocol = TransportProtocol::LocalSocket;
+};
+struct LocalMerkleLocalSocketTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+  static constexpr TransportProtocol protocol = TransportProtocol::LocalSocket;
+};
+struct S3NaiveLocalSocketTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+  static constexpr TransportProtocol protocol = TransportProtocol::LocalSocket;
+};
+struct S3MerkleLocalSocketTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+  static constexpr TransportProtocol protocol = TransportProtocol::LocalSocket;
+};
+
+struct LocalNaiveTcpTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+  static constexpr TransportProtocol protocol = TransportProtocol::Tcp;
+};
+struct LocalMerkleTcpTag {
+  using Storage = LocalStorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+  static constexpr TransportProtocol protocol = TransportProtocol::Tcp;
+};
+struct S3NaiveTcpTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Naive;
+  static constexpr TransportProtocol protocol = TransportProtocol::Tcp;
+};
+struct S3MerkleTcpTag {
+  using Storage = S3StorageTag;
+  static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
+  static constexpr TransportProtocol protocol = TransportProtocol::Tcp;
+};
+
+using SyncTestImplementations =
+    ::testing::Types<S3MerkleLocalSocketTag, S3NaiveLocalSocketTag,
+                     LocalMerkleLocalSocketTag, LocalNaiveLocalSocketTag,
+                     S3MerkleTcpTag, S3NaiveTcpTag, LocalMerkleTcpTag,
+                     LocalNaiveTcpTag>;
+
 struct LocalNaiveTag {
   using Storage = LocalStorageTag;
   static constexpr SyncStrategy strategy = SyncStrategy::Naive;
@@ -53,7 +103,8 @@ struct S3MerkleTag {
   static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
 };
 
-using SyncTestImplementations = ::testing::Types<S3MerkleTag,S3NaiveTag,LocalMerkleTag,LocalNaiveTag>;
+// using SyncTestImplementations =
+// ::testing::Types<S3MerkleTag,S3NaiveTag,LocalMerkleTag,LocalNaiveTag>;
 
 template <typename Tag> class SyncTest : public ::testing::Test {
 protected:
@@ -66,21 +117,34 @@ protected:
     QDir().mkpath(clientDir->path());
     QDir().mkpath(serverDir->path());
 
-    fileServer.configure(
-        FileServerConfig{.serverName = serverName,
-                         .storage = Tag::Storage::makeStorage(serverDir->path())});
+    QString endpoint = endpointFor(Tag::protocol, runId);
+
+    fileServer.configure(FileServerConfig{
+        .protocol = Tag::protocol,
+        .serverName = endpoint,
+        .storage = Tag::Storage::makeStorage(serverDir->path())});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
+    qDebug() << "Server serverName after start:" << fileServer.serverName();
 
+    QString clientEndpoint = fileServer.serverName();
     client = std::make_unique<FileClient>();
-    client->configure(FileClientConfig{.rootDir = clientDir->path(),
+    client->configure(FileClientConfig{.protocol = Tag::protocol,
+                                       .rootDir = clientDir->path(),
                                        .username = username,
                                        .password = "bar",
                                        .syncStrategy = Tag::strategy,
                                        .manualTick = true,
-                                       .serverName = serverName,
+                                       .serverName = clientEndpoint,
                                        .deviceName = deviceName});
     client->start();
+  }
+
+  QString endpointFor(TransportProtocol protocol, const QString &runId) {
+    if (protocol == TransportProtocol::Tcp) {
+      return "127.0.0.1:0"; // 0 = OS picks free port
+    }
+    return "merkle_sync_test_" + runId; // unique local socket name
   }
 
   void TearDown() override {
@@ -111,7 +175,6 @@ protected:
   std::unique_ptr<FileClient> client;
   QDir *clientDir = nullptr;
   QDir *serverDir = nullptr;
-  QString serverName = "merkle_sync_test";
   FileServer fileServer;
   QString username = "foo";
   QString deviceName = "client1";
@@ -227,6 +290,7 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
+
 template <typename Tag> class MerkleSyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
@@ -237,8 +301,12 @@ protected:
                          "/test_merkle_sync_server/" + runId);
     QDir().mkpath(clientDir->path());
     QDir().mkpath(serverDir->path());
+
+    endpoint = endpointFor(Tag::protocol, runId);
+
     fileServer.configure(FileServerConfig{
-        .serverName = serverName,
+        .protocol = Tag::protocol,
+        .serverName = endpoint,
         .storage = Tag::Storage::makeStorage(serverDir->path())});
     fileServer.start();
   }
@@ -248,7 +316,6 @@ protected:
       QDir(clientDir->path()).removeRecursively();
     }
     fileServer.getStorage()->cleanup(username);
-
     delete clientDir;
     delete serverDir;
   }
@@ -263,26 +330,35 @@ protected:
 
   std::unique_ptr<FileClient> makeClient() {
     auto client = std::make_unique<FileClient>();
-    client->configure(FileClientConfig{.rootDir = clientDir->path(),
+    client->configure(FileClientConfig{.protocol = Tag::protocol,
+                                       .rootDir = clientDir->path(),
                                        .username = username,
                                        .password = "bar",
                                        .syncStrategy = SyncStrategy::Merkle,
                                        .manualTick = true,
-                                       .serverName = serverName,
+                                       .serverName = endpoint,
                                        .deviceName = deviceName});
     return client;
   }
 
+  QString endpointFor(TransportProtocol protocol, const QString &runId) {
+    if (protocol == TransportProtocol::Tcp) {
+      int port = 50000 + QRandomGenerator::global()->bounded(10000);
+      return "127.0.0.1:" + QString::number(port);
+    }
+    return "merkle_sync_test_" + runId;
+  }
+
   QDir *clientDir = nullptr;
   QDir *serverDir = nullptr;
-  QString serverName = "merkle_sync_test";
+  QString endpoint;
   FileServer fileServer;
   QString username = "foo";
   QString deviceName = "merkle_client1";
 };
 
 using MerkleSyncTestImplementations =
-    ::testing::Types<LocalMerkleTag, S3MerkleTag>;
+    ::testing::Types<LocalMerkleLocalSocketTag, S3MerkleLocalSocketTag,LocalMerkleTcpTag,S3MerkleTcpTag>;
 TYPED_TEST_SUITE(MerkleSyncTest, MerkleSyncTestImplementations);
 
 TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
@@ -376,6 +452,7 @@ TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   ASSERT_EQ(result->diffEntries.modified.size(), 0);
 }
 
+
 template <typename Tag> class MultiDeviceSyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
@@ -384,11 +461,13 @@ protected:
                      "/test_multidevice_server/" + runId);
     QDir().mkpath(serverDir.path());
 
-    fileServer.configure(
-        FileServerConfig{.serverName = serverName,
-                         .storage = Tag::makeStorage(serverDir.path())});
-    fileServer.getStorage()->cleanup(username);
+    endpoint = endpointFor(Tag::protocol, runId);
 
+    fileServer.configure(FileServerConfig{
+        .protocol = Tag::protocol,
+        .serverName = endpoint,
+        .storage = Tag::Storage::makeStorage(serverDir.path())});
+    fileServer.getStorage()->cleanup(username);
     fileServer.start();
 
     deviceA = makeClient("device-a");
@@ -421,12 +500,13 @@ protected:
 
     auto client = std::make_unique<FileClient>();
     client->configure(FileClientConfig{
+        .protocol = Tag::protocol,
         .rootDir = dirPath,
         .username = username,
         .password = "bar",
-        .syncStrategy = SyncStrategy::Naive,
+        .syncStrategy = Tag::strategy,
         .manualTick = true,
-        .serverName = serverName,
+        .serverName = endpoint,
         .deviceName = deviceName,
     });
     client->start();
@@ -443,10 +523,18 @@ protected:
     loop.exec();
   }
 
+  QString endpointFor(TransportProtocol protocol, const QString &runId) {
+    if (protocol == TransportProtocol::Tcp) {
+      int port = 50000 + QRandomGenerator::global()->bounded(10000);
+      return "127.0.0.1:" + QString::number(port);
+    }
+    return "multidevice_sync_test_" + runId;
+  }
+
   QString runId;
+  QString endpoint;
   QDir serverDir;
   QList<QString> clientDirs;
-  QString serverName = "multidevice_sync_test";
   QString username = "foo";
   FileServer fileServer;
   std::unique_ptr<FileClient> deviceA;
@@ -454,10 +542,10 @@ protected:
   std::unique_ptr<FileClient> deviceC;
 };
 
-// Not adding yet the merkle strategy stuff
 using MultiDeviceSyncTestImplementations =
-    ::testing::Types<LocalStorageTag, S3StorageTag>;
-
+    ::testing::Types<LocalNaiveLocalSocketTag, S3NaiveLocalSocketTag,
+                     LocalNaiveTcpTag, S3NaiveTcpTag>;
+                     // LocalMerkleLocalSocketTag,LocalMerkleTcpTag,S3MerkleLocalSocketTag,S3MerkleTcpTag>;
 TYPED_TEST_SUITE(MultiDeviceSyncTest, MultiDeviceSyncTestImplementations);
 
 TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {

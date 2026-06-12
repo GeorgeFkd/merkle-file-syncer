@@ -5,11 +5,20 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <memory>
 #include <qnamespace.h>
+#include "TcpServerTransport.h"
 
 void FileServer::configure(FileServerConfig config) {
   this->fileStorage = std::move(config.storage);
-  transport = std::make_unique<LocalServerTransport>();
+  switch(config.protocol){
+    case TransportProtocol::LocalSocket:
+      transport = std::make_unique<LocalServerTransport>();
+      break;
+    case TransportProtocol::Tcp:
+      transport = std::make_unique<TcpServerTransport>();
+      break;
+  }
   transport->configure(config.serverName);
 }
 
