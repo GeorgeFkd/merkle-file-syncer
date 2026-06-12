@@ -1,5 +1,6 @@
 #include "FileServer.h"
 #include "FileHasher.h"
+#include "LocalServerTransport.h"
 #include "Messages.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -8,96 +9,89 @@
 
 void FileServer::configure(FileServerConfig config) {
   this->fileStorage = std::move(config.storage);
-  serverUrl = std::move(config.serverName);
+  transport = std::make_unique<LocalServerTransport>();
+  transport->configure(config.serverName);
 }
 
 void FileServer::start() {
-  QLocalServer::removeServer(serverUrl);
-  server.listen(serverUrl);
   setupConnections();
+  transport->start();
 }
 
 FileServer::~FileServer() {
-  server.close();
-  for (auto *socket : socketToTokenMap.keys()) {
-    socket->disconnect(this);
-  }
-  for (auto *socket : buffers.keys()) {
-    socket->disconnect(this);
-  }
 }
 
-void FileServer::setupConnections() {
-  QObject::connect(&server, &QLocalServer::newConnection, [&]() {
-    qDebug() << "New connection received";
-    QLocalSocket *socket = server.nextPendingConnection();
-    setupNewSocketConnection(socket);
-  });
+void FileServer::setupConnections() { setupSocketConnections(); }
+
+void FileServer::setupSocketConnections() {
+  QObject::connect(transport.get(), &ServerTransport::newConnection, this,
+                   &FileServer::onNewConnection);
+
+  QObject::connect(transport.get(), &ServerTransport::messageReady, this,
+                   &FileServer::dispatch);
+  QObject::connect(transport.get(), &ServerTransport::disconnected, this,
+                   &FileServer::onSocketDisconnected);
+
+  
 }
 
-QString FileServer::serverName() { return server.serverName(); }
+void FileServer::onNewConnection() {
+  qDebug() << "New connection received";
+  
+}
 
-bool FileServer::isListening() { return server.isListening(); }
+QString FileServer::serverName() { return transport->endpoint(); }
 
-void FileServer::setupNewSocketConnection(QLocalSocket *socket) {
-  qDebug() << "Handling new connection.";
-  QObject::connect(socket, &QLocalSocket::disconnected, socket,
-                   &QLocalSocket::deleteLater);
+bool FileServer::isListening() { return transport->isListening(); }
 
-  QObject::connect(socket, &QLocalSocket::disconnected, this, [this, socket]() {
-    auto it = socketToTokenMap.find(socket);
-    if (it != socketToTokenMap.end()) {
-      sessionStore.revokeSession(it.value());
-      socketToTokenMap.erase(it);
+
+
+void FileServer::onSocketDisconnected(QIODevice* socket) {
+  auto it = socketToTokenMap.find(socket);
+  if (it != socketToTokenMap.end()) {
+    sessionStore.revokeSession(it.value());
+    socketToTokenMap.erase(it);
+  }
+  buffers.remove(socket);
+}
+
+void FileServer::dispatch(QIODevice *socket, Message *msg) {
+  if (!msg) {
+    qDebug() << "Failed to deserialize message";
+    return;
+  }
+  qDebug() << "Dispatching message to handler.";
+  switch (msg->type()) {
+  case MessageType::ClientAuth: {
+    auto resp = handleAuth(static_cast<AuthMessage *>(msg));
+    if (resp.success) {
+      socketToTokenMap.insert(socket, resp.token);
+      qDebug() << "Inserted token " << resp.token
+               << " in store and created session";
     }
-    buffers.remove(socket);
-  });
-
-  QObject::connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
-    qDebug() << "Ready read event fired.";
-    MessageProtocol::processBuffer(
-        socket, buffers[socket], [this, socket](Message *msg) {
-          if (!msg) {
-            qDebug() << "Failed to deserialize message";
-            return;
-          }
-          qDebug() << "Dispatching message to handler.";
-          switch (msg->type()) {
-          case MessageType::ClientAuth: {
-            auto resp = handleAuth(static_cast<AuthMessage *>(msg));
-            if (resp.success) {
-              socketToTokenMap.insert(socket, resp.token);
-              qDebug() << "Inserted token " << resp.token
-                       << " in store and created session";
-            }
-            MessageProtocol::sendMessage(socket, resp);
-            break;
-          }
-          case MessageType::SyncRequest: {
-            auto resp =
-                handleSyncRequest(static_cast<SyncRequestMessage *>(msg));
-            MessageProtocol::sendMessage(socket, resp);
-            break;
-          }
-          case MessageType::MerkleSync: {
-            auto resp =
-                handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg));
-            MessageProtocol::sendMessage(socket, resp);
-            break;
-          }
-          case MessageType::ListRequest: {
-            auto resp =
-                handleListRequest(static_cast<ListRequestMessage *>(msg));
-            MessageProtocol::sendMessage(socket, resp);
-            break;
-          }
-          default: {
-            handleUnrecognized(msg);
-            break;
-          }
-          }
-        });
-  });
+    transport->send(socket, resp);
+    break;
+  }
+  case MessageType::SyncRequest: {
+    auto resp = handleSyncRequest(static_cast<SyncRequestMessage *>(msg));
+    transport->send(socket, resp);
+    break;
+  }
+  case MessageType::MerkleSync: {
+    auto resp = handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg));
+    transport->send(socket, resp);
+    break;
+  }
+  case MessageType::ListRequest: {
+    auto resp = handleListRequest(static_cast<ListRequestMessage *>(msg));
+    transport->send(socket, resp);
+    break;
+  }
+  default: {
+    handleUnrecognized(msg);
+    break;
+  }
+  }
 }
 
 bool FileServer::writeFile(const QString &user, const QString &file,
@@ -120,9 +114,10 @@ QString FileServer::getUserFrom(Message *msg) {
   return username.value();
 }
 
-SyncRequestMessage FileServer::handleDeleteRequest(
-    SyncRequestMessage *msg, const QString &storageKey,
-    const std::optional<QDateTime> &storedMtime) {
+SyncRequestMessage
+FileServer::handleDeleteRequest(SyncRequestMessage *msg,
+                                const QString &storageKey,
+                                const std::optional<QDateTime> &storedMtime) {
   SyncRequestMessage response;
   response.path = msg->path;
   response.operationType = FileOperationType::Delete;
@@ -178,9 +173,10 @@ SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
   return response;
 }
 
-SyncRequestMessage FileServer::handleWriteRequest(
-    SyncRequestMessage *msg, const QString &storageKey,
-    const std::optional<QDateTime> &storedMtime) {
+SyncRequestMessage
+FileServer::handleWriteRequest(SyncRequestMessage *msg,
+                               const QString &storageKey,
+                               const std::optional<QDateTime> &storedMtime) {
   SyncRequestMessage response;
   response.path = msg->path;
   response.operationType = FileOperationType::Write;
@@ -205,7 +201,8 @@ SyncRequestMessage FileServer::handleWriteRequest(
     return response;
   }
 
-  getUserTree(username)->addFile(QString::fromStdString(msg->path).toStdString());
+  getUserTree(username)->addFile(
+      QString::fromStdString(msg->path).toStdString());
   database.updateFileMtime(storageKey, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;

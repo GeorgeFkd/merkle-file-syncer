@@ -6,6 +6,7 @@
 #include "SessionRegistry.h"
 #include <QLocalServer>
 #include <QLocalSocket>
+#include "ServerTransport.h"
 
 struct FileServerConfig {
   QString serverName;
@@ -29,15 +30,21 @@ public:
 
 private:
   // --- Server lifecycle / connections ---
+  std::unique_ptr<ServerTransport> transport;
   QLocalServer server;
   QString serverUrl;
-  QHash<QLocalSocket *, QByteArray> buffers;
+  QHash<QIODevice*, QByteArray> buffers;
   void setupConnections();
+  void setupSocketConnections();
+  void onSocketDisconnected(QIODevice* socket);
+  void onSocketReadyRead(QIODevice* socket);
+  void onNewConnection();
+  void dispatch(QIODevice* socket,Message *msg);
   void setupNewSocketConnection(QLocalSocket *socket);
 
   // --- Auth / sessions ---
   SessionRegistry sessionStore;
-  QHash<QLocalSocket *, QString> socketToTokenMap;
+  QHash<QIODevice*, QString> socketToTokenMap;
   AuthResponseMessage handleAuth(AuthMessage *msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
