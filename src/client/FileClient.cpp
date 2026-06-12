@@ -1,4 +1,5 @@
 #include "FileClient.h"
+#include "LocalClientTransport.h"
 #include "LocalFileStorage.h"
 #include "Messages.h"
 #include <QCoreApplication>
@@ -7,7 +8,7 @@
 #include <qnamespace.h>
 
 FileClient::FileClient() {
-  socket = new QLocalSocket(this);
+  // socket = new QLocalSocket(this);
   fileStorage = std::make_unique<LocalFileStorage>();
 }
 
@@ -29,11 +30,14 @@ void FileClient::configure(const FileClientConfig &config) {
   tickIntervalMs = config.tickIntervalMs;
   database.storeUser(username, password, fileStorage->rootPath(username));
   deviceName = config.deviceName;
+
+  transport = std::make_unique<LocalClientTransport>();
+  transport->configure(serverName);
 }
 
 LocalFileStorage *FileClient::getStorage() { return fileStorage.get(); }
 
-void FileClient::connectToServer() { socket->connectToServer(serverName); }
+void FileClient::connectToServer() { transport->connectToServer(); }
 
 void FileClient::start() {
   setupConnections();
@@ -41,52 +45,46 @@ void FileClient::start() {
 }
 
 void FileClient::setupConnections() {
-  QObject::connect(socket, &QLocalSocket::connected, this, [this]() {
-    qDebug() << "Connected event fired.";
-    state = ClientState::Authenticating;
-    sendAuthRequest();
-  });
-  QObject::connect(socket, &QLocalSocket::disconnected, this, [this]() {
-    state = ClientState::Disconnected;
-    token.clear();
-  });
 
-  QObject::connect(this, &FileClient::authenticated, this, [this]() {
-    if (pendingTick) {
-      pendingTick = false;
-      clientTick();
-    }
-  });
+  setupSocketConnections();
+
+  QObject::connect(this, &FileClient::authenticated, this,
+                   &FileClient::onAuthenticated);
   QObject::connect(this, &FileClient::outboundFileCommandsReady, this,
                    &FileClient::flushOutboundCommands);
   QObject::connect(this, &FileClient::negotiationCompleted, this,
                    &FileClient::handleNegotiationCompleted);
-  QObject::connect(socket, &QLocalSocket::readyRead, this, [this]() {
-    MessageProtocol::processBuffer(socket, buffer, [this](Message *msg) {
-      if (!msg) {
-        qDebug() << "Failed to deserialize message";
-        return;
-      }
-      switch (msg->type()) {
-      case MessageType::ServerAuthResponse:
-        handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
-        break;
-      case MessageType::SyncRequest:
-        handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
-        break;
-      case MessageType::MerkleSync:
-        handleMerkleSyncResponse(static_cast<MerkleSyncMessage *>(msg));
-        break;
-      case MessageType::ListResponse:
-        handleListResponse(static_cast<ListResponseMessage *>(msg));
-        break;
-      default:
-        handleUnrecognized(msg);
-        break;
-      }
-    });
-  });
+  startTimer();
+}
 
+void FileClient::setupSocketConnections() {
+  QObject::connect(transport.get(), &ClientTransport::connected, this,
+                   &FileClient::onConnected);
+  QObject::connect(transport.get(), &ClientTransport::disconnected, this,
+                   &FileClient::onDisconnected);
+  QObject::connect(transport.get(), &ClientTransport::messageReady, this,
+                   &FileClient::dispatch);
+}
+
+void FileClient::onConnected() {
+  qDebug() << "Connected event fired.";
+  state = ClientState::Authenticating;
+  sendAuthRequest();
+}
+
+void FileClient::onDisconnected() {
+  state = ClientState::Disconnected;
+  token.clear();
+}
+
+void FileClient::onAuthenticated() {
+  if (pendingTick) {
+    pendingTick = false;
+    clientTick();
+  }
+}
+
+void FileClient::startTimer() {
   if (shouldUseTimer) {
     QObject::connect(&timer, &QTimer::timeout, this,
                      [this]() { clientTick(); });
@@ -94,10 +92,36 @@ void FileClient::setupConnections() {
   }
 }
 
+void FileClient::dispatch(Message *msg) {
+  if (!msg) {
+    qDebug() << "Failed to deserialize message";
+    return;
+  }
+  switch (msg->type()) {
+  case MessageType::ServerAuthResponse: {
+    handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
+    break;
+  }
+  case MessageType::SyncRequest: {
+    handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
+    break;
+  }
+  case MessageType::MerkleSync: {
+    handleMerkleSyncResponse(static_cast<MerkleSyncMessage *>(msg));
+    break;
+  }
+  case MessageType::ListResponse: {
+    handleListResponse(static_cast<ListResponseMessage *>(msg));
+    break;
+  }
+  default: {
+    handleUnrecognized(msg);
+    break;
+  }
+  }
+}
+
 FileClient::~FileClient() {
-  socket->blockSignals(true);
-  QObject::disconnect(socket, nullptr, nullptr, nullptr);
-  socket->abort();
 }
 
 void FileClient::handleListResponse(ListResponseMessage *msg) {
@@ -309,7 +333,7 @@ QList<QString> FileClient::discoverDeletedFiles() {
 void FileClient::flushOutboundCommands() {
   qDebug() << "Flushing sync requests accumulated from client";
   for (auto it = commandsToSend.begin(); it != commandsToSend.end(); ++it) {
-    MessageProtocol::sendMessage(socket, it.value());
+    transport->send(it.value());
     pendingMessages++;
   }
   commandsToSend.clear();
@@ -385,7 +409,7 @@ void FileClient::naiveTick() {
   ListRequestMessage req;
   req.token = token;
   awaitingListResponse = true;
-  MessageProtocol::sendMessage(socket, req);
+  transport->send(req);
 }
 
 bool FileClient::writeFile(const QString &user, const QString &path,
@@ -498,7 +522,7 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
     }
 
     negotiationState.directoriesToCheckWithServer.clear();
-    MessageProtocol::sendMessage(socket, nextMsg);
+    transport->send(nextMsg);
     return;
   }
   Q_EMIT negotiationCompleted();
@@ -519,7 +543,7 @@ void FileClient::requestDirectoryList(const QString &dirPath) {
   req.token = token;
   req.directory = dirPath;
   pendingDirectoryRequests++;
-  MessageProtocol::sendMessage(socket, req);
+  transport->send(req);
 }
 
 void FileClient::stageDeleteFor(const QString &path) {
@@ -604,7 +628,7 @@ void FileClient::merkleTick() {
   msg.rootHash = merkleTree->rootHash();
   msg.depth = 0;
   qDebug() << "Initiating negotiation with msg: " << msg;
-  MessageProtocol::sendMessage(socket, msg);
+  transport->send(msg);
 }
 
 QString FileClient::getDeviceName() { return deviceName; }
@@ -614,7 +638,7 @@ void FileClient::sendAuthRequest() {
   msg.username = username;
   msg.password = password;
   msg.deviceName = getDeviceName();
-  MessageProtocol::sendMessage(socket, msg);
+  transport->send(msg);
 }
 
 void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
@@ -629,7 +653,8 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   } else {
     qDebug() << "Auth failed: " << msg->error;
     state = ClientState::Disconnected;
-    socket->disconnectFromServer();
+    //if we want explicit disconnect on auth failure should add a disconnect method 
+    //to the clienttransport abstraction
   }
 }
 

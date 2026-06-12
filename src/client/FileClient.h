@@ -1,10 +1,10 @@
 #pragma once
+#include "ClientTransport.h"
 #include "FileDb.h"
 #include "FileHasher.h"
 #include "LocalFileStorage.h"
 #include "MerkleTree.h"
 #include "Messages.h"
-#include <QLocalSocket>
 #include <QString>
 #include <QTimer>
 
@@ -74,17 +74,22 @@ private:
   SyncStrategy syncStrategy;
 
   // --- Connection / auth state ---
-  QLocalSocket *socket = nullptr;
+  std::unique_ptr<ClientTransport> transport;
   ClientState state = ClientState::Disconnected;
   QString token;
-  QByteArray buffer;
   void connectToServer();
   void sendAuthRequest();
+  void dispatch(Message *msg);
+  void onConnected();
+  void onDisconnected();
+  void onAuthenticated();
+  void setupSocketConnections();
   QString getDeviceName();
   void handleAuthResponse(AuthResponseMessage *msg);
 
   // --- Ticking ---
   QTimer timer;
+  void startTimer();
   unsigned int tickIntervalMs;
   bool shouldUseTimer = true;
   bool pendingTick = false;
