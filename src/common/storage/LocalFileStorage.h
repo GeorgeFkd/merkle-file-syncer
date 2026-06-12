@@ -17,6 +17,11 @@ public:
   void cleanup(const QString &user) override;
   std::optional<QDateTime> getMtime(const QString &user,
                                     const QString &filename) const;
+  std::optional<qint64> fileSize(const QString &user,
+                                 const QString &path) const override;
+  std::optional<QByteArray> readRange(const QString &user, const QString &path,
+                                      qint64 offset,
+                                      qint64 length) const override;
 
 private:
   QString fullPath(const QString &user, const QString &filename) const;

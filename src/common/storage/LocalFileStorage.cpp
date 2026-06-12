@@ -82,9 +82,46 @@ QList<QString> LocalFileStorage::listFiles(const QString &user) const {
   return files;
 }
 
-std::optional<QDateTime> LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
-    QString path = fullPath(user, filename);
-    QFileInfo info(path);
-    if (!info.exists()) return std::nullopt;
-    return info.lastModified();
+std::optional<QDateTime>
+LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
+  QString path = fullPath(user, filename);
+  QFileInfo info(path);
+  if (!info.exists())
+    return std::nullopt;
+  return info.lastModified();
+}
+
+std::optional<qint64> LocalFileStorage::fileSize(const QString &user,
+                                                 const QString &path) const {
+  QString fullPath = rootPath(user) + "/" + path;
+  QFileInfo info(fullPath);
+  if (!info.exists()) {
+    qDebug() << "LocalFileStorage::fileSize: file does not exist" << fullPath;
+    return std::nullopt;
+  }
+  return info.size();
+}
+
+std::optional<QByteArray> LocalFileStorage::readRange(const QString &user,
+                                                      const QString &path,
+                                                      qint64 offset,
+                                                      qint64 length) const {
+  //better be explicit than implicit
+  if(length == 0) {
+    return QByteArray{};
+  }
+
+  QString fullPath = rootPath(user) + "/" + path;
+  QFile file(fullPath);
+  if (!file.open(QIODevice::ReadOnly)) {
+    qDebug() << "LocalFileStorage::readRange: could not open" << fullPath;
+    return std::nullopt;
+  }
+  if (!file.seek(offset)) {
+    qDebug() << "LocalFileStorage::readRange: seek failed for" << fullPath
+             << "offset" << offset;
+    return std::nullopt;
+  }
+  QByteArray data = file.read(length);
+  return data;
 }

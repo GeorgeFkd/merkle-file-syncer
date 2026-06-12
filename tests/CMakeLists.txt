@@ -42,3 +42,19 @@ if(BUILD_S3_IMPL)
 endif()
 set_target_properties(sync_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(sync_tests)
+
+
+add_executable(storage_tests main.cpp storage_tests.cpp)
+target_link_libraries(
+  storage_tests
+  PRIVATE GTest::gtest
+          rapidcheck
+          storage
+          Qt6::Core)
+target_include_directories(storage_tests PRIVATE ${TEST_COMMON_INCLUDES})
+if(BUILD_S3_IMPL)
+  target_include_directories(storage_tests
+                             PRIVATE $ENV{VCPKG_ROOT}/installed/x64-linux)
+endif()
+set_target_properties(storage_tests PROPERTIES AUTOMOC ON)
+gtest_discover_tests(storage_tests)
