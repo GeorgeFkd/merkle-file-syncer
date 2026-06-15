@@ -14,6 +14,8 @@ struct NodesDiff {
   QList<QPair<bool, QString>> onlyInLeft;
   QList<QPair<bool, QString>> onlyInRight;
   QList<QString> modified;
+  QList<QString> deletionWinsLeft;
+  QList<QString> deletionWinsRight;
 };
 
 struct NegotiationState {

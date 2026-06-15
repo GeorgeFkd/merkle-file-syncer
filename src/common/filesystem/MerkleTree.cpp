@@ -64,7 +64,6 @@ TreeDiff MerkleTree::merkleNegotiateDiffs(const MerkleTree &lhs,
         auto &[leftNode, isTombstoned] = *found;
         if (leftNode->type == FileType::File) {
           result.onlyInLeft.append(path);
-
         } else {
           toDescend.append(path);
         }
@@ -192,7 +191,7 @@ QByteArray MerkleTree::hashChildren(const FileNode *node) const {
 }
 
 bool MerkleTree::deleteFile(const std::string &relativePath,
-                            bool useTombstone) {
+                            bool useTombstone,const QDateTime& deletedAt) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::deleteFile", "root is null");
   Q_ASSERT_X(!relativePath.empty(), "MerkleTree::deleteFile",
              "relativePath is empty");
@@ -230,7 +229,7 @@ bool MerkleTree::deleteFile(const std::string &relativePath,
   }
   if (useTombstone) {
     auto node = (*it).get();
-    markTombstoneRecursively(node, QDateTime::currentDateTime());
+    markTombstoneRecursively(node, deletedAt);
     computeHashes(current);
   } else {
     current->children.erase(it);
@@ -312,6 +311,21 @@ bool MerkleTree::addFile(const std::string &relativePath,
       }
     } else {
       current = found;
+      if (i == parts.size() - 1) {
+        current->mtime = mtime;
+        if (current->isDeleted) {
+          current->isDeleted = false;
+          current->deletedAt = QDateTime();
+          current->type = FileType::File;
+        }
+
+        if (current->type == FileType::File) {
+          current->hash = hashFile(QString::fromStdString(relativePath));
+          qDebug() << "Propagating hash of: " << current->path << " (updated).";
+          propagateHash(current);
+          return true;
+        }
+      }
     }
   }
   return true;

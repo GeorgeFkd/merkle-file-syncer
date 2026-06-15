@@ -1,14 +1,14 @@
 #pragma once
 #include "FileStorage.h"
 #include <QByteArray>
+#include <QDateTime>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-#include <QSet>
-#include <QDateTime>
 enum class FileType { File, Directory };
 
 class TreeDiff {
@@ -23,7 +23,7 @@ public:
   FileType type;
   QString path;
   QByteArray hash;
-  //tombstone
+  // tombstone
   bool isDeleted = false;
   QDateTime deletedAt;
   QDateTime mtime;
@@ -33,18 +33,23 @@ public:
 class FileTree {
 public:
   virtual ~FileTree() = default;
-  virtual bool addFile(const std::string &relativePath,const QDateTime& mtime = QDateTime::currentDateTime()) = 0;
-  virtual bool deleteFile(const std::string &relativePath,bool useTombstone = false) = 0;
+  virtual bool
+  addFile(const std::string &relativePath,
+          const QDateTime &mtime = QDateTime::currentDateTime()) = 0;
+  virtual bool
+  deleteFile(const std::string &relativePath, bool useTombstone = false,
+             const QDateTime &deletedAt = QDateTime::currentDateTime()) = 0;
   int fileCount() const;
   virtual TreeDiff diff(const FileTree &other) const = 0;
   virtual void debug() const = 0;
   virtual QString getRootPath() const = 0;
   virtual FileNode *getRoot() const = 0;
   void buildFromStorage(const FileStorage *storage, const QString &username);
-  std::optional<std::tuple<FileNode *,bool>> find(const std::string &relativePath) const;
+  std::optional<std::tuple<FileNode *, bool>>
+  find(const std::string &relativePath) const;
 
 protected:
-  void markTombstoneRecursively(FileNode* node,const QDateTime& deletedAt);
+  void markTombstoneRecursively(FileNode *node, const QDateTime &deletedAt);
   std::optional<FileNode *> findNode(const std::string &relativePath,
                                      FileNode *root) const;
   int countFileNodes(FileNode *node) const;

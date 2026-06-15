@@ -1,17 +1,17 @@
 #pragma once
 #include "FileTree.h"
 
-
-
-
 class MerkleTree : public FileTree {
 public:
   explicit MerkleTree(const std::string &rootDir);
   explicit MerkleTree();
   void debug() const override;
   // bool addFile(const std::string &relativePath) override;
-  bool addFile(const std::string& relativePath,const QDateTime& mtime = QDateTime::currentDateTime()) override;
-  bool deleteFile(const std::string &relativePath,bool useTombstone = false) override;
+  bool addFile(const std::string &relativePath,
+               const QDateTime &mtime = QDateTime::currentDateTime()) override;
+  bool deleteFile(
+      const std::string &relativePath, bool useTombstone = false,
+      const QDateTime &deletedAt = QDateTime::currentDateTime()) override;
   TreeDiff diff(const FileTree &other) const override;
   QString getRootPath() const override;
   FileNode *getRoot() const override;
@@ -20,10 +20,12 @@ public:
   void setHasher(std::function<QByteArray(const QString &)> hasher);
   QList<QPair<QString, QByteArray>> getHashesAtDepth(int depth) const;
   QList<QPair<QString, QByteArray>> getChildHashes(const QString &path) const;
-  static TreeDiff symmetricHashDiff(
-    const QList<QPair<QString, QByteArray>> &lhs,
-    const QList<QPair<QString, QByteArray>> &rhs);
-  static TreeDiff merkleNegotiateDiffs(const MerkleTree &lhs, const MerkleTree &rhs);
+  static TreeDiff
+  symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
+                    const QList<QPair<QString, QByteArray>> &rhs);
+  static TreeDiff merkleNegotiateDiffs(const MerkleTree &lhs,
+                                       const MerkleTree &rhs);
+
 private:
   QByteArray hashFile(const QString &relativePath) const;
   QByteArray hashChildren(const FileNode *node) const;

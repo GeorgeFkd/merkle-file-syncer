@@ -102,7 +102,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     return false;
   }
   database.updateFileMtime(user + "/" + file, mtime);
-  getUserTree(user)->addFile(file.toStdString());
+  getUserTree(user)->addFile(file.toStdString(),mtime);
   return true;
 }
 
@@ -136,7 +136,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg,
   }
 
   QDateTime clientMtime =
-      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
+      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
   QDateTime serverMtime = storedMtime.value();
   if (serverMtime > clientMtime) {
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
@@ -149,8 +149,11 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg,
     response.operationStatus = FileOperationStatus::Error;
     return response;
   }
-  database.markDeleted(storageKey, QDateTime::currentDateTime());
-  getUserTree(username)->deleteFile(msg->path);
+
+  QDateTime clientDeletedAt =
+      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
+  database.markDeleted(storageKey, clientDeletedAt);
+  getUserTree(username)->deleteFile(msg->path, true, clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -169,7 +172,7 @@ SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
     return response;
   }
   response.contents = contents.value();
-  response.mtime = serverMtime.toString(Qt::ISODate).toStdString();
+  response.mtime = serverMtime.toString(Qt::ISODateWithMs).toStdString();
   response.operationStatus = FileOperationStatus::ServerHasNewer;
   return response;
 }
@@ -187,7 +190,7 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg,
          "Token should always be set so we can fetch username on server");
 
   QDateTime clientMtime =
-      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODate);
+      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
 
   if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
@@ -203,20 +206,37 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg,
   }
 
   getUserTree(username)->addFile(
-      QString::fromStdString(msg->path).toStdString());
+      QString::fromStdString(msg->path).toStdString(), clientMtime);
   database.updateFileMtime(storageKey, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
 
 MerkleTree *FileServer::getUserTree(const QString &username) {
-  if (userTrees.find(username) == userTrees.end()) {
-    auto tree = std::make_unique<MerkleTree>();
-    tree->setHasher(FileHasher(fileStorage.get(), username));
-    tree->buildFromStorage(fileStorage.get(), username);
-    userTrees.emplace(username, std::move(tree));
+  auto it = userTrees.find(username);
+  if (it != userTrees.end()) {
+    return it->second.get();
   }
-  return userTrees.at(username).get();
+
+  auto tree = std::make_unique<MerkleTree>(username.toStdString());
+  tree->setHasher(FileHasher(fileStorage.get(), username));
+  tree->buildFromStorage(fileStorage.get(), username);
+
+  // Apply DB tombstones to the tree
+  auto tombstones = database.allTombstones();
+  QString prefix = username + "/";
+  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
+    const QString &storageKey = it.key();
+    if (!storageKey.startsWith(prefix)) {
+      continue;
+    }
+    QString path = storageKey.mid(prefix.length());
+    tree->deleteFile(path.toStdString(), /*useTombstone=*/true);
+  }
+
+  auto *raw = tree.get();
+  userTrees.emplace(username, std::move(tree));
+  return raw;
 }
 
 MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
@@ -245,8 +265,17 @@ MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
       auto foundNode = serverTree->find(path.toStdString());
       if (foundNode.has_value()) {
         auto &[node, isTombstoned] = *foundNode;
-        FileType type = node->type;
-        childEntries.append({path, hash, QDateTime{}, type});
+        MerkleEntry entry;
+        entry.path = path;
+        entry.hash = hash;
+        entry.mtime = node->mtime;
+        entry.filetype = node->type;
+        entry.isTombstone = isTombstoned;
+        entry.deletedAt = node->deletedAt;
+        childEntries.append(entry);
+        qDebug() << "Server building entry path(from getHashesAtDepth(1))="
+                 << node->path << "isTombstone=" << isTombstoned
+                 << "deletedAt=" << node->deletedAt;
       }
     }
     response.fileEntriesPerChild.append({"", childEntries});
@@ -267,9 +296,18 @@ MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
     for (const auto &[path, hash] : childHashes) {
       auto childFound = serverTree->find(path.toStdString());
       if (childFound.has_value()) {
-        auto &[childNode, isTombstoned] = *childFound;
-        FileType type = childNode->type;
-        childEntries.append({path, hash, QDateTime{}, type});
+        auto &[childNode, childIsTombstoned] = *childFound;
+        MerkleEntry entry;
+        entry.path = path;
+        entry.hash = hash;
+        entry.mtime = childNode->mtime;
+        entry.filetype = childNode->type;
+        entry.isTombstone = childIsTombstoned;
+        entry.deletedAt = childNode->deletedAt;
+        childEntries.append(entry);
+        qDebug() << "Server building entry path=" << childNode->path
+                 << "isTombstone=" << childIsTombstoned
+                 << "deletedAt=" << childNode->deletedAt;
       }
     }
     response.fileEntriesPerChild.append({parentPath, childEntries});

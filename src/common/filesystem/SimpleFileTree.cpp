@@ -10,7 +10,7 @@ SimpleFileTree::SimpleFileTree(const std::string &rootDir) {
 void SimpleFileTree::debug() const { debugNode(root.get(), 0); }
 
 bool SimpleFileTree::deleteFile(const std::string &relativePath,
-                                bool useTombstone) {
+                                bool useTombstone,const QDateTime& deletedAt) {
   Q_ASSERT_X(root != nullptr, "SimpleFileTree::deleteFile", "root is null");
   Q_ASSERT_X(!relativePath.empty(), "SimpleFileTree::deleteFile",
              "relativePath is empty");

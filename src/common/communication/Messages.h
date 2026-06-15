@@ -42,6 +42,8 @@ struct MerkleEntry {
   QByteArray hash;
   QDateTime mtime;
   FileType filetype;
+  bool isTombstone = false;
+  QDateTime deletedAt;
 };
 
 

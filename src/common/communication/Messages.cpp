@@ -1,4 +1,5 @@
 #include "Messages.h"
+#include <qnamespace.h>
 void MessageProtocol::sendMessage(QIODevice *socket, const Message &msg) {
   QByteArray payload = msg.serialize();
   QByteArray frame;
@@ -37,7 +38,6 @@ QByteArray MerkleSyncMessage::serialize() const {
   obj["depth"] = depth;
   obj["phase"] = phase;
   obj["rootHash"] = QString::fromLatin1(rootHash.toHex());
-
   QJsonArray childrenArray;
   for (const auto &[childPath, entries] : fileEntriesPerChild) {
     QJsonObject childObj;
@@ -47,16 +47,17 @@ QByteArray MerkleSyncMessage::serialize() const {
       QJsonObject entryObj;
       entryObj["path"] = entry.path;
       entryObj["hash"] = QString::fromLatin1(entry.hash.toHex());
-      entryObj["mtime"] = entry.mtime.toString(Qt::ISODate);
+      entryObj["mtime"] = entry.mtime.toString(Qt::ISODateWithMs);
       entryObj["type"] =
           entry.filetype == FileType::Directory ? "directory" : "file";
+      entryObj["isTombstone"] = entry.isTombstone;
+      entryObj["deletedAt"] = entry.deletedAt.toString(Qt::ISODateWithMs);
       entriesArray.append(entryObj);
     }
     childObj["entries"] = entriesArray;
     childrenArray.append(childObj);
   }
   obj["fileEntriesPerChild"] = childrenArray;
-
   return QJsonDocument(obj).toJson();
 }
 
@@ -77,10 +78,13 @@ MerkleSyncMessage::deserialize(const QJsonObject &obj) {
       entry.path = entryObj["path"].toString();
       entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
       entry.mtime =
-          QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODate);
+          QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODateWithMs);
       entry.filetype = entryObj["type"].toString() == "directory"
                            ? FileType::Directory
                            : FileType::File;
+      entry.isTombstone = entryObj["isTombstone"].toBool(false);
+      entry.deletedAt = QDateTime::fromString(
+          entryObj["deletedAt"].toString(), Qt::ISODateWithMs);
       entries.append(entry);
     }
     msg->fileEntriesPerChild.append({childPath, entries});
@@ -249,7 +253,7 @@ QByteArray ListResponseMessage::serialize() const {
   for (const auto &entry : entries) {
     QJsonObject entryObj;
     entryObj["path"] = entry.path;
-    entryObj["mtime"] = entry.mtime.toString(Qt::ISODate);
+    entryObj["mtime"] = entry.mtime.toString(Qt::ISODateWithMs);
     entryObj["deleted"] = entry.deleted;
     entriesArray.append(entryObj);
   }
@@ -265,7 +269,7 @@ ListResponseMessage::deserialize(const QJsonObject &obj) {
     FileEntry entry;
     entry.path = entryObj["path"].toString();
     entry.mtime =
-        QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODate);
+        QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODateWithMs);
     entry.deleted = entryObj["deleted"].toBool();
     msg->entries.append(entry);
   }

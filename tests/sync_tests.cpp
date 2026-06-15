@@ -9,11 +9,11 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QRandomGenerator>
 #include <QTimer>
 #include <QUuid>
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
-#include <QRandomGenerator>
 
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -290,7 +290,6 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
 
-
 template <typename Tag> class MerkleSyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
@@ -358,7 +357,8 @@ protected:
 };
 
 using MerkleSyncTestImplementations =
-    ::testing::Types<LocalMerkleLocalSocketTag, S3MerkleLocalSocketTag,LocalMerkleTcpTag,S3MerkleTcpTag>;
+    ::testing::Types<LocalMerkleLocalSocketTag, S3MerkleLocalSocketTag,
+                     LocalMerkleTcpTag, S3MerkleTcpTag>;
 TYPED_TEST_SUITE(MerkleSyncTest, MerkleSyncTestImplementations);
 
 TYPED_TEST(MerkleSyncTest, negotiationIdentifiesCorrectDiff) {
@@ -402,16 +402,17 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesDeletedFiles) {
   client->writeFile(this->username, "images/photo.jpg", "photo data");
   client->writeFile(this->username, "readme.txt", "readme");
 
+  QDateTime serverWriteTime = QDateTime::currentDateTime().addSecs(-1);
   this->fileServer.writeFile(this->username, "docs/report.txt", "report",
-                             QDateTime::currentDateTime());
+                             serverWriteTime);
   this->fileServer.writeFile(this->username, "docs/notes.txt", "notes",
-                             QDateTime::currentDateTime());
+                             serverWriteTime);
   this->fileServer.writeFile(this->username, "docs/draft.txt", "draft",
-                             QDateTime::currentDateTime());
+                             serverWriteTime);
   this->fileServer.writeFile(this->username, "images/photo.jpg", "photo data",
-                             QDateTime::currentDateTime());
+                             serverWriteTime);
   this->fileServer.writeFile(this->username, "readme.txt", "readme",
-                             QDateTime::currentDateTime());
+                             serverWriteTime);
 
   client->deleteFile(this->username, "docs/notes.txt");
   client->deleteFile(this->username, "readme.txt");
@@ -422,14 +423,15 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesDeletedFiles) {
   this->waitForNegotiation(*client);
 
   auto result = client->getNegotiationState();
-  ASSERT_EQ(result->diffEntries.onlyInLeft.size(), 0);
-  ASSERT_EQ(result->diffEntries.onlyInRight.size(), 2);
-  ASSERT_TRUE(
-      result->diffEntries.onlyInRight.contains({true, "docs/notes.txt"}));
-  ASSERT_TRUE(result->diffEntries.onlyInRight.contains({true, "readme.txt"}));
-  ASSERT_EQ(result->diffEntries.modified.size(), 0);
-}
 
+  ASSERT_EQ(result->diffEntries.onlyInLeft.size(), 0);
+  ASSERT_EQ(result->diffEntries.onlyInRight.size(), 0);
+  ASSERT_EQ(result->diffEntries.modified.size(), 0);
+  ASSERT_EQ(result->diffEntries.deletionWinsLeft.size(), 2);
+  ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("docs/notes.txt"));
+  ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("readme.txt"));
+  ASSERT_EQ(result->diffEntries.deletionWinsRight.size(), 0);
+}
 TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   auto client = this->makeClient();
   client->writeFile(this->username, "docs/report.txt", "report");
@@ -451,7 +453,6 @@ TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   ASSERT_EQ(result->diffEntries.onlyInRight.size(), 0);
   ASSERT_EQ(result->diffEntries.modified.size(), 0);
 }
-
 
 template <typename Tag> class MultiDeviceSyncTest : public ::testing::Test {
 protected:
@@ -544,8 +545,8 @@ protected:
 
 using MultiDeviceSyncTestImplementations =
     ::testing::Types<LocalNaiveLocalSocketTag, S3NaiveLocalSocketTag,
-                     LocalNaiveTcpTag, S3NaiveTcpTag>;
-                     // LocalMerkleLocalSocketTag,LocalMerkleTcpTag,S3MerkleLocalSocketTag,S3MerkleTcpTag>;
+                     LocalNaiveTcpTag, S3NaiveTcpTag, LocalMerkleLocalSocketTag,
+                     LocalMerkleTcpTag, S3MerkleLocalSocketTag, S3MerkleTcpTag>;
 TYPED_TEST_SUITE(MultiDeviceSyncTest, MultiDeviceSyncTestImplementations);
 
 TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {

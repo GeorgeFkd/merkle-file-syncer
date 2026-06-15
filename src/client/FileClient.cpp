@@ -151,7 +151,8 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
         qDebug() << "Applied server tombstone for:" << entry.path;
       }
       if (merkleTree) {
-        merkleTree->deleteFile(entry.path.toStdString());
+        merkleTree->deleteFile(entry.path.toStdString(), true,
+                               QDateTime::currentDateTime());
       }
       database.removeFileMtime(entry.path);
     }
@@ -206,9 +207,10 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
       req.token = token;
       req.path = path.toStdString();
       req.contents = {};
-      req.mtime = localMtime.has_value()
-                      ? localMtime.value().toString(Qt::ISODate).toStdString()
-                      : "";
+      req.mtime =
+          localMtime.has_value()
+              ? localMtime.value().toString(Qt::ISODateWithMs).toStdString()
+              : "";
       req.operationType = FileOperationType::Write;
       req.operationStatus = FileOperationStatus::DoIt;
       commandsToSend.insert(path, req);
@@ -443,7 +445,9 @@ bool FileClient::writeFile(const QString &user, const QString &path,
 
   // we should not update the database, let the client discover it.
   if (merkleTree) {
-    merkleTree->addFile(path.toStdString());
+    auto mtime = fileStorage->getMtime(username, path);
+    assert(mtime.has_value());
+    merkleTree->addFile(path.toStdString(), mtime.value());
   }
   return true;
 }
@@ -456,7 +460,8 @@ bool FileClient::deleteFile(const QString &user, const QString &path) {
     return false;
   }
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString());
+    merkleTree->deleteFile(path.toStdString(), /*useTombstone=*/true,
+                           QDateTime::currentDateTime());
   }
 
   return true;
@@ -489,8 +494,8 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
           "The server should not send a parentPath back that the client does "
           "not have already, cause the client should not ask for nodes he "
           "doesnt have, it just notes them for the sync stage");
-      auto &[parentNode,isTombstoned] = *parent;
-      
+      auto &[parentNode, isTombstoned] = *parent;
+
       clientHashesOfNode = merkleTree->getChildHashes(parentPath);
       qDebug() << "Parent path is: " << parentNode->path;
     }
@@ -500,41 +505,115 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
       serverHashesOfNode.append({entry.path, entry.hash});
     }
 
+    qDebug() << "Client hashes at this level (count="
+             << clientHashesOfNode.size() << "):";
+    for (const auto &[p, h] : clientHashesOfNode) {
+      qDebug() << "  " << p << "->" << h.toHex().left(16);
+    }
+    qDebug() << "Server hashes at this level (count="
+             << serverHashesOfNode.size() << "):";
+    for (const auto &[p, h] : serverHashesOfNode) {
+      qDebug() << "  " << p << "->" << h.toHex().left(16);
+    }
+
     auto diff =
         MerkleTree::symmetricHashDiff(clientHashesOfNode, serverHashesOfNode);
+
+    auto findServerEntry =
+        [&fileEntries](const QString &path) -> std::optional<MerkleEntry> {
+      for (const auto &entry : fileEntries) {
+        if (entry.path == path) {
+          return entry;
+        }
+      }
+      return std::nullopt;
+    };
+
     for (const auto &entry : diff.onlyInLeft) {
       auto foundNode = merkleTree->find(entry.toStdString());
       assert(foundNode.has_value());
-      auto &[node,isTombstoned] = *foundNode;
-      negotiationState.diffEntries.onlyInLeft.append(
-          {node->type == FileType::File, entry});
+      auto &[node, isTombstoned] = *foundNode;
+      if (isTombstoned) {
+        negotiationState.diffEntries.deletionWinsLeft.append(entry);
+      } else {
+        negotiationState.diffEntries.onlyInLeft.append(
+            {node->type == FileType::File, entry});
+      }
     }
 
     for (const auto &entry : diff.onlyInRight) {
-      // just look up the entry in the server sent msg
-      FileType type = FileType::File;
-      for (const auto &serverEntry : fileEntries) {
-        if (serverEntry.path == entry) {
-          type = serverEntry.filetype;
-          break;
-        }
+      auto serverEntry = findServerEntry(entry);
+      if (!serverEntry.has_value()) {
+        qDebug() << "Server reported diff for path not in entries:" << entry;
+        continue;
       }
-      negotiationState.diffEntries.onlyInRight.append(
-          {type == FileType::File, entry});
+
+      if (serverEntry->isTombstone) {
+        // Server has tombstoned, client doesn't know about path at all
+        negotiationState.diffEntries.deletionWinsRight.append(entry);
+      } else {
+        negotiationState.diffEntries.onlyInRight.append(
+            {serverEntry->filetype == FileType::File, entry});
+      }
     }
 
     for (const auto &entry : diff.modified) {
       auto foundNode = merkleTree->find(entry.toStdString());
       assert(foundNode.has_value());
-      auto &[node,isTombstoned] = *foundNode;
+      auto &[node, clientHasTombstone] = *foundNode;
+
+      auto serverEntry = findServerEntry(entry);
+      if (!serverEntry.has_value()) {
+        qDebug() << "Server reported modified path not in entries:" << entry;
+        continue;
+      }
+
+      qDebug() << "Tombstone comparison: serverDeletedAt="
+               << serverEntry->deletedAt << "clientMtime=" << node->mtime
+               << "result=" << (serverEntry->deletedAt > node->mtime);
+      bool serverIsTombstone = serverEntry->isTombstone;
+
+      if (clientHasTombstone && serverIsTombstone) {
+        // Both tombstoned, no diff
+        continue;
+      }
+
+      if (clientHasTombstone && !serverIsTombstone) {
+        qDebug() << "Branch taken: clientTombstone=true, serverAlive."
+           << "node->deletedAt=" << node->deletedAt
+           << "serverEntry->mtime=" << serverEntry->mtime
+           << "deletion newer? " << (node->deletedAt > serverEntry->mtime);
+        // Client deletion vs server alive — compare timestamps
+        if (node->deletedAt > serverEntry->mtime) {
+          // Deletion is newer → propagate delete to server
+          negotiationState.diffEntries.deletionWinsLeft.append(entry);
+        } else {
+          // Server's content is newer than client's deletion → resurrect on
+          // client
+          negotiationState.diffEntries.onlyInRight.append(
+              {serverEntry->filetype == FileType::File, entry});
+        }
+        continue;
+      }
+
+      if (!clientHasTombstone && serverIsTombstone) {
+        if (serverEntry->deletedAt > node->mtime) {
+          negotiationState.diffEntries.deletionWinsRight.append(entry);
+        } else {
+          negotiationState.diffEntries.onlyInLeft.append(
+              {node->type == FileType::File, entry});
+        }
+        continue;
+      }
+
+      // Both alive
       if (node->type == FileType::Directory) {
         negotiationState.directoriesToCheckWithServer.append(entry);
       } else {
-        negotiationState.diffEntries.modified.append({true, entry});
+        negotiationState.diffEntries.modified.append(entry);
       }
     }
   }
-
   if (!negotiationState.directoriesToCheckWithServer.isEmpty()) {
     MerkleSyncMessage nextMsg;
     nextMsg.token = token;
@@ -576,9 +655,8 @@ void FileClient::stageDeleteFor(const QString &path) {
   msg.token = token;
   msg.path = path.toStdString();
   msg.contents = {};
-  msg.mtime = mtime.has_value()
-                  ? mtime.value().toString(Qt::ISODate).toStdString()
-                  : "";
+  msg.mtime =
+      QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toStdString();
   msg.operationType = FileOperationType::Delete;
   msg.operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
@@ -593,7 +671,7 @@ FileClient::buildSyncRequest(const QString &path, FileOperationType op,
   msg.path = path.toStdString();
   msg.contents = contents;
   msg.mtime = mtime.has_value()
-                  ? mtime.value().toString(Qt::ISODate).toStdString()
+                  ? mtime.value().toString(Qt::ISODateWithMs).toStdString()
                   : "";
   msg.operationType = op;
   msg.operationStatus = FileOperationStatus::DoIt;
@@ -628,7 +706,32 @@ void FileClient::handleNegotiationCompleted() {
   for (const auto &path : negotiationState.diffEntries.modified) {
     // modified should only contain files at this point — directories
     // were resolved during negotiation via directoriesToCheckWithServer
+    {
+      auto found = merkleTree->find(path.toStdString());
+      assert(found.has_value());
+      auto &[node, isTombstoned] = *found;
+      assert(node->type == FileType::File);
+    }
     stageConflictResolution(path);
+  }
+
+  for (const auto &path : negotiationState.diffEntries.deletionWinsLeft) {
+    // Client has tombstoned, server doesn't know — stage a Delete request
+    // to server
+    stageDeleteFor(path);
+  }
+
+  for (const auto &path : negotiationState.diffEntries.deletionWinsRight) {
+    // Server tombstoned, client should apply deletion locally
+    if (fileStorage->readFile(username, path).has_value()) {
+      fileStorage->deleteFile(username, path);
+    }
+    database.removeFileMtime(path);
+    if (merkleTree) {
+      merkleTree->deleteFile(path.toStdString(), /*useTombstone=*/true,
+                             QDateTime::currentDateTime());
+    }
+    qDebug() << "Applied server tombstone via merkle negotiation:" << path;
   }
 
   if (pendingDirectoryRequests == 0) {
@@ -677,8 +780,8 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
   } else {
     qDebug() << "Auth failed: " << msg->error;
     state = ClientState::Disconnected;
-    // if we want explicit disconnect on auth failure should add a disconnect
-    // method to the clienttransport abstraction
+    // if we want explicit disconnect on auth failure should add a
+    // disconnect method to the clienttransport abstraction
   }
 }
 
