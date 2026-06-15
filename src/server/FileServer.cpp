@@ -2,22 +2,22 @@
 #include "FileHasher.h"
 #include "LocalServerTransport.h"
 #include "Messages.h"
+#include "TcpServerTransport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <memory>
 #include <qnamespace.h>
-#include "TcpServerTransport.h"
 
 void FileServer::configure(FileServerConfig config) {
   this->fileStorage = std::move(config.storage);
-  switch(config.protocol){
-    case TransportProtocol::LocalSocket:
-      transport = std::make_unique<LocalServerTransport>();
-      break;
-    case TransportProtocol::Tcp:
-      transport = std::make_unique<TcpServerTransport>();
-      break;
+  switch (config.protocol) {
+  case TransportProtocol::LocalSocket:
+    transport = std::make_unique<LocalServerTransport>();
+    break;
+  case TransportProtocol::Tcp:
+    transport = std::make_unique<TcpServerTransport>();
+    break;
   }
   transport->configure(config.serverName);
 }
@@ -27,8 +27,7 @@ void FileServer::start() {
   transport->start();
 }
 
-FileServer::~FileServer() {
-}
+FileServer::~FileServer() {}
 
 void FileServer::setupConnections() { setupSocketConnections(); }
 
@@ -40,22 +39,15 @@ void FileServer::setupSocketConnections() {
                    &FileServer::dispatch);
   QObject::connect(transport.get(), &ServerTransport::disconnected, this,
                    &FileServer::onSocketDisconnected);
-
-  
 }
 
-void FileServer::onNewConnection() {
-  qDebug() << "New connection received";
-  
-}
+void FileServer::onNewConnection() { qDebug() << "New connection received"; }
 
 QString FileServer::serverName() { return transport->endpoint(); }
 
 bool FileServer::isListening() { return transport->isListening(); }
 
-
-
-void FileServer::onSocketDisconnected(QIODevice* socket) {
+void FileServer::onSocketDisconnected(QIODevice *socket) {
   auto it = socketToTokenMap.find(socket);
   if (it != socketToTokenMap.end()) {
     sessionStore.revokeSession(it.value());
@@ -250,9 +242,12 @@ MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
     auto rootChildren = serverTree->getHashesAtDepth(1);
     QList<MerkleEntry> childEntries;
     for (const auto &[path, hash] : rootChildren) {
-      auto node = serverTree->find(path.toStdString());
-      FileType type = node.has_value() ? (*node)->type : FileType::File;
-      childEntries.append({path, hash, QDateTime{}, type});
+      auto foundNode = serverTree->find(path.toStdString());
+      if (foundNode.has_value()) {
+        auto &[node, isTombstoned] = *foundNode;
+        FileType type = node->type;
+        childEntries.append({path, hash, QDateTime{}, type});
+      }
     }
     response.fileEntriesPerChild.append({"", childEntries});
     return response;
@@ -262,16 +257,20 @@ MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
   response.depth = msg->depth;
 
   for (const auto &[parentPath, _] : msg->fileEntriesPerChild) {
-    auto node = serverTree->find(parentPath.toStdString());
-    assert(node.has_value() && (*node)->type == FileType::Directory);
+    auto foundNode = serverTree->find(parentPath.toStdString());
+    assert(foundNode.has_value());
+    auto &[node, isTombstoned] = *foundNode;
+    assert(node->type == FileType::Directory);
 
     auto childHashes = serverTree->getChildHashes(parentPath);
     QList<MerkleEntry> childEntries;
     for (const auto &[path, hash] : childHashes) {
-      auto childNode = serverTree->find(path.toStdString());
-      FileType type =
-          childNode.has_value() ? (*childNode)->type : FileType::File;
-      childEntries.append({path, hash, QDateTime{}, type});
+      auto childFound = serverTree->find(path.toStdString());
+      if (childFound.has_value()) {
+        auto &[childNode, isTombstoned] = *childFound;
+        FileType type = childNode->type;
+        childEntries.append({path, hash, QDateTime{}, type});
+      }
     }
     response.fileEntriesPerChild.append({parentPath, childEntries});
   }

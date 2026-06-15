@@ -80,12 +80,38 @@ TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
 
   auto tree = this->makeTree();
   ASSERT_EQ(tree->fileCount(), 3);
-  ASSERT_TRUE(tree->contains("foo/bar.txt"));
-  ASSERT_TRUE(tree->contains("foo/baz.txt"));
-  ASSERT_TRUE(tree->contains("foo/subdir/nested.txt"));
-  ASSERT_TRUE(tree->contains("foo"));
-  ASSERT_FALSE(tree->contains("fool"));
-  ASSERT_FALSE(tree->contains("foo/new.txt"));
+
+  // Existing live files: found, not tombstoned
+  {
+    auto found = tree->find("foo/bar.txt");
+    ASSERT_TRUE(found.has_value());
+    auto &[node, isTombstoned] = *found;
+    ASSERT_FALSE(isTombstoned);
+  }
+  {
+    auto found = tree->find("foo/baz.txt");
+    ASSERT_TRUE(found.has_value());
+    auto &[node, isTombstoned] = *found;
+    ASSERT_FALSE(isTombstoned);
+  }
+  {
+    auto found = tree->find("foo/subdir/nested.txt");
+    ASSERT_TRUE(found.has_value());
+    auto &[node, isTombstoned] = *found;
+    ASSERT_FALSE(isTombstoned);
+  }
+
+  // Directory node: found, not tombstoned
+  {
+    auto found = tree->find("foo");
+    ASSERT_TRUE(found.has_value());
+    auto &[node, isTombstoned] = *found;
+    ASSERT_FALSE(isTombstoned);
+  }
+
+  // Non-existent paths: not found at all
+  ASSERT_FALSE(tree->find("fool").has_value());
+  ASSERT_FALSE(tree->find("foo/new.txt").has_value());
 }
 
 TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
@@ -96,7 +122,7 @@ TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
   auto tree = this->makeTree();
   this->storage->writeFile(this->user, "foo/new.txt", "new content");
   ASSERT_TRUE(tree->addFile("foo/new.txt"));
-  ASSERT_TRUE(tree->contains("foo/new.txt"));
+  ASSERT_TRUE(tree->find("foo/new.txt").has_value());
 }
 
 // ─── FilesystemDiffFixture ───────────────────────────────────────────────────
@@ -209,16 +235,27 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
   auto leftTree = this->makeLeftTree();
   auto rightTree = this->makeRightTree();
 
-  ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt"));
-  ASSERT_FALSE(leftTree->contains("foo/baz.txt"));
+  ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt",true));
+  auto found = leftTree->find("foo/baz.txt");
+  ASSERT_TRUE(found.has_value());
+  auto &[node, isTombstoned] = *found;
+  ASSERT_TRUE(isTombstoned);
 
   auto diff = leftTree->diff(*rightTree);
+
   ASSERT_EQ(diff.onlyInRight.size(), 1);
   ASSERT_EQ(diff.onlyInRight[0], "foo/baz.txt");
 
-  ASSERT_TRUE(leftTree->deleteFile("foo/subdir"));
-  ASSERT_FALSE(leftTree->contains("foo/subdir"));
-  ASSERT_FALSE(leftTree->contains("foo/subdir/nested.txt"));
+  ASSERT_TRUE(leftTree->deleteFile("foo/subdir",true));
+  auto foundLeftDir = leftTree->find("foo/subdir");
+  ASSERT_TRUE(foundLeftDir.has_value());
+  auto &[leftDirNode, isLeftDirTombstoned] = *foundLeftDir;
+  ASSERT_TRUE(isLeftDirTombstoned);
+
+  auto foundLeftFile = leftTree->find("foo/subdir/nested.txt");
+  ASSERT_TRUE(foundLeftFile.has_value());
+  auto &[leftFileNode, isLeftFileTombstoned] = *foundLeftFile;
+  ASSERT_TRUE(isLeftFileTombstoned);
 
   diff = leftTree->diff(*rightTree);
   ASSERT_EQ(diff.onlyInRight.size(), 2);
@@ -312,10 +349,13 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteFile) {
   ASSERT_TRUE(tree->verifyHashes());
 
   auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/baz.txt");
+  tree->deleteFile("foo/baz.txt",true);
 
   ASSERT_NE(hashBefore, tree->rootHash());
-  ASSERT_FALSE(tree->contains("foo/baz.txt"));
+  auto found = tree->find("foo/baz.txt");
+  ASSERT_TRUE(found.has_value());
+  auto &[node, isTombstoned] = *found;
+  ASSERT_TRUE(isTombstoned);
   ASSERT_TRUE(tree->verifyHashes());
 }
 
@@ -326,11 +366,18 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteDirectory) {
   ASSERT_TRUE(tree->verifyHashes());
 
   auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/subdir");
+  tree->deleteFile("foo/subdir",true);
 
   ASSERT_NE(hashBefore, tree->rootHash());
-  ASSERT_FALSE(tree->contains("foo/subdir"));
-  ASSERT_FALSE(tree->contains("foo/subdir/nested.txt"));
+  auto foundDir = tree->find("foo/subdir");
+  ASSERT_TRUE(foundDir.has_value());
+  auto &[dirNode, isDirTombstoned] = *foundDir;
+  ASSERT_TRUE(isDirTombstoned);
+
+  auto foundFile = tree->find("foo/subdir/nested.txt");
+  ASSERT_TRUE(foundFile.has_value());
+  auto &[fileNode, isFileTombstoned] = *foundFile;
+  ASSERT_TRUE(isFileTombstoned);
   ASSERT_TRUE(tree->verifyHashes());
 }
 
@@ -368,7 +415,6 @@ TEST_F(MerkleTreeFixture, getChildHashesReturnsCorrectChildren) {
 
   auto tree = makeTree();
 
-  // foo has bar.txt, baz.txt and subdir
   auto fooChildren = tree->getChildHashes("foo");
   ASSERT_EQ(fooChildren.size(), 3);
 
@@ -380,7 +426,6 @@ TEST_F(MerkleTreeFixture, getChildHashesReturnsCorrectChildren) {
   ASSERT_TRUE(paths.contains("foo/baz.txt"));
   ASSERT_TRUE(paths.contains("foo/subdir"));
 
-  // subdir has only nested.txt
   auto subdirChildren = tree->getChildHashes("foo/subdir");
   ASSERT_EQ(subdirChildren.size(), 1);
   ASSERT_EQ(subdirChildren[0].first, "foo/subdir/nested.txt");

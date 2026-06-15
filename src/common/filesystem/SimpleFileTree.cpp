@@ -9,42 +9,47 @@ SimpleFileTree::SimpleFileTree(const std::string &rootDir) {
 
 void SimpleFileTree::debug() const { debugNode(root.get(), 0); }
 
-bool SimpleFileTree::deleteFile(const std::string& relativePath) {
+bool SimpleFileTree::deleteFile(const std::string &relativePath,
+                                bool useTombstone) {
   Q_ASSERT_X(root != nullptr, "SimpleFileTree::deleteFile", "root is null");
-    Q_ASSERT_X(!relativePath.empty(), "SimpleFileTree::deleteFile", "relativePath is empty");
+  Q_ASSERT_X(!relativePath.empty(), "SimpleFileTree::deleteFile",
+             "relativePath is empty");
 
-    auto parts = QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
-    FileNode *current = root.get();
+  auto parts =
+      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+  FileNode *current = root.get();
 
-    for (int i = 0; i < parts.size() - 1; i++) {
-        const auto &part = parts[i];
-        FileNode *found = nullptr;
-        for (const auto &child : current->children) {
-            if (child->path == part) {
-                found = child.get();
-                break;
-            }
-        }
-        if (!found) {
-            qDebug() << "Path not found:" << QString::fromStdString(relativePath);
-            return false;
-        }
-        current = found;
+  for (int i = 0; i < parts.size() - 1; i++) {
+    const auto &part = parts[i];
+    FileNode *found = nullptr;
+    for (const auto &child : current->children) {
+      if (child->path == part) {
+        found = child.get();
+        break;
+      }
     }
-
-    const auto &filename = parts.last();
-    auto it = std::find_if(current->children.begin(), current->children.end(),
-                           [&filename](const std::unique_ptr<FileNode> &child) {
-                               return child->path == filename;
-                           });
-
-    if (it == current->children.end()) {
-        qDebug() << "File not found:" << QString::fromStdString(relativePath);
-        return false;
+    if (!found) {
+      qDebug() << "Path not found:" << QString::fromStdString(relativePath);
+      return false;
     }
+    current = found;
+  }
 
-    current->children.erase(it);
-    return true;
+  const auto &filename = parts.last();
+  auto it = std::find_if(current->children.begin(), current->children.end(),
+                         [&filename](const std::unique_ptr<FileNode> &child) {
+                           return child->path == filename;
+                         });
+
+  if (it == current->children.end()) {
+    qDebug() << "File not found:" << QString::fromStdString(relativePath);
+    return false;
+  }
+
+  auto node = (*it).get();
+  markTombstoneRecursively(node, QDateTime::currentDateTime());
+  // current->children.erase(it);
+  return true;
 }
 
 void SimpleFileTree::debugNode(const FileNode *node, int depth) const {
@@ -58,7 +63,8 @@ void SimpleFileTree::debugNode(const FileNode *node, int depth) const {
   }
 }
 
-bool SimpleFileTree::addFile(const std::string &relativePath) {
+bool SimpleFileTree::addFile(const std::string &relativePath,
+                             const QDateTime &mtime) {
   qDebug() << "Adding file: " << relativePath << "\n";
   Q_ASSERT_X(root != nullptr, "SimpleFileTree::addFile", "root is null");
   Q_ASSERT_X(!relativePath.empty(), "SimpleFileTree::addFile",
@@ -85,6 +91,7 @@ bool SimpleFileTree::addFile(const std::string &relativePath) {
       newNode->path = part;
       newNode->type =
           (i == parts.size() - 1) ? FileType::File : FileType::Directory;
+      newNode->mtime = mtime;
       current->children.push_back(std::move(newNode));
       current = current->children.back().get();
     } else {
@@ -122,46 +129,71 @@ void SimpleFileTree::diffNodes(const FileNode *left,
       rightChildren[child->path] = child.get();
   }
 
+  // in left not in right
   for (auto it = leftChildren.begin(); it != leftChildren.end(); ++it) {
-    if (!rightChildren.contains(it.key())) {
+    bool found = rightChildren.contains(it.key());
+    if (!found) {
       QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
       if (it.value()->type == FileType::File)
         result.onlyInLeft.append(fullPath);
       else
         collectAllFiles(it.value(), fullPath, result.onlyInLeft);
+    } else {
+      auto foundRight = rightChildren[it.key()];
+      if (foundRight->isDeleted) {
+        QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
+        if (it.value()->type == FileType::File)
+          result.onlyInLeft.append(fullPath);
+        else
+          collectAllFiles(it.value(), fullPath, result.onlyInLeft);
+      }
     }
   }
 
+  // in right not in left
   for (auto it = rightChildren.begin(); it != rightChildren.end(); ++it) {
-    if (!leftChildren.contains(it.key())) {
+    bool found = leftChildren.contains(it.key());
+    if (!found) {
       QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
       if (it.value()->type == FileType::File)
         result.onlyInRight.append(fullPath);
       else
         collectAllFiles(it.value(), fullPath, result.onlyInRight);
+    } else {
+      auto foundLeft = leftChildren[it.key()];
+      if (foundLeft->isDeleted) {
+        QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
+        if (it.value()->type == FileType::File)
+          result.onlyInRight.append(fullPath);
+        else
+          collectAllFiles(it.value(), fullPath, result.onlyInRight);
+      }
     }
   }
 
   for (auto it = leftChildren.begin(); it != leftChildren.end(); ++it) {
-    if (rightChildren.contains(it.key())) {
+    auto found = rightChildren.contains(it.key());
+    if (found) {
       QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
       const FileNode *leftNode = it.value();
       const FileNode *rightNode = rightChildren[it.key()];
-      if (leftNode->type == FileType::File &&
-          rightNode->type == FileType::File) {
+      if(rightNode->isDeleted || leftNode->isDeleted){continue;}
+      auto bothFiles = leftNode->type == FileType::File && rightNode->type == FileType::File;
+      if (bothFiles) {
         QFile lf(leftRootPath + "/" + fullPath);
         QFile rf(rightRootPath + "/" + fullPath);
         if (!lf.open(QIODevice::ReadOnly) || !rf.open(QIODevice::ReadOnly)) {
           qDebug() << "Failed to open files for comparison:" << fullPath;
           return;
         }
-        // lf.open(QIODevice::ReadOnly);
-        // rf.open(QIODevice::ReadOnly);
-        if (lf.readAll() != rf.readAll() && leftNode->path == rightNode->path) {
+        bool contentsDiffer = lf.readAll() != rf.readAll();
+        bool pathsSame = leftNode->path == rightNode->path;
+        if (contentsDiffer && pathsSame) {
           qDebug() << "Found a file with different contents";
           result.modified.append(fullPath);
         }
-      } else {
+      } else{
+        qDebug() << "Recursing into: "<< leftRootPath << "," << rightRootPath;
         diffNodes(leftNode, leftRootPath, rightNode, rightRootPath, fullPath,
                   result);
       }

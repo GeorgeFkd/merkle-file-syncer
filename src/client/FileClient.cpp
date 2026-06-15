@@ -489,8 +489,10 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
           "The server should not send a parentPath back that the client does "
           "not have already, cause the client should not ask for nodes he "
           "doesnt have, it just notes them for the sync stage");
+      auto &[parentNode,isTombstoned] = *parent;
+      
       clientHashesOfNode = merkleTree->getChildHashes(parentPath);
-      qDebug() << "Parent path is: " << parent.value()->path;
+      qDebug() << "Parent path is: " << parentNode->path;
     }
 
     QList<QPair<QString, QByteArray>> serverHashesOfNode;
@@ -501,10 +503,11 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
     auto diff =
         MerkleTree::symmetricHashDiff(clientHashesOfNode, serverHashesOfNode);
     for (const auto &entry : diff.onlyInLeft) {
-      auto node = merkleTree->find(entry.toStdString());
-      assert(node.has_value());
+      auto foundNode = merkleTree->find(entry.toStdString());
+      assert(foundNode.has_value());
+      auto &[node,isTombstoned] = *foundNode;
       negotiationState.diffEntries.onlyInLeft.append(
-          {node.value()->type == FileType::File, entry});
+          {node->type == FileType::File, entry});
     }
 
     for (const auto &entry : diff.onlyInRight) {
@@ -521,9 +524,10 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
     }
 
     for (const auto &entry : diff.modified) {
-      auto node = merkleTree->find(entry.toStdString());
-      assert(node.has_value());
-      if (node.value()->type == FileType::Directory) {
+      auto foundNode = merkleTree->find(entry.toStdString());
+      assert(foundNode.has_value());
+      auto &[node,isTombstoned] = *foundNode;
+      if (node->type == FileType::Directory) {
         negotiationState.directoriesToCheckWithServer.append(entry);
       } else {
         negotiationState.diffEntries.modified.append({true, entry});

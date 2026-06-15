@@ -5,8 +5,8 @@ class SimpleFileTree : public FileTree {
 public:
     explicit SimpleFileTree(const std::string &rootDir);
     void debug() const override;
-    bool addFile(const std::string &relativePath) override;
-    bool deleteFile(const std::string& relativePath) override;
+    bool addFile(const std::string &relativePath,const QDateTime& mtime = QDateTime::currentDateTime()) override;
+    bool deleteFile(const std::string& relativePath,bool useTombstone = false) override;
     TreeDiff diff(const FileTree &other) const override;
     QString getRootPath() const override;
     FileNode *getRoot() const override;

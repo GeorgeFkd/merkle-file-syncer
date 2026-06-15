@@ -4,7 +4,8 @@
 #include <QFileInfo>
 #include <QString>
 
-void FileTree::buildFromStorage(const FileStorage *storage,const QString& user) {
+void FileTree::buildFromStorage(const FileStorage *storage,
+                                const QString &user) {
   root = std::make_unique<FileNode>();
   root->type = FileType::Directory;
   root->path = user;
@@ -17,7 +18,7 @@ void FileTree::buildFromStorage(const FileStorage *storage,const QString& user) 
   afterBuild();
 }
 
-std::optional<FileNode *>
+std::optional<std::tuple<FileNode *,bool>>
 FileTree::find(const std::string &relativePath) const {
   auto parts =
       QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
@@ -34,12 +35,9 @@ FileTree::find(const std::string &relativePath) const {
     if (!found)
       return {};
   }
-  return current;
+  return std::make_tuple(current, current->isDeleted);
 }
 
-bool FileTree::contains(const std::string &relativePath) const {
-  return find(relativePath).has_value();
-}
 
 int FileTree::countFileNodes(FileNode *node) const {
   if (node->type == FileType::File)
@@ -49,6 +47,14 @@ int FileTree::countFileNodes(FileNode *node) const {
     sum += countFileNodes(child.get());
   }
   return sum;
+}
+
+void FileTree::markTombstoneRecursively(FileNode *node,const QDateTime& deletedAt) {
+  node->isDeleted = true;
+  node->deletedAt = deletedAt;
+  for (auto &child:node->children) {
+    markTombstoneRecursively(child.get(), deletedAt);
+  }
 }
 
 void FileTree::collectAllFiles(const FileNode *node, const QString &path,
