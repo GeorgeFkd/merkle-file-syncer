@@ -10,7 +10,7 @@ public:
   bool addFile(const std::string &relativePath,
                const QDateTime &mtime = QDateTime::currentDateTime()) override;
   bool deleteFile(
-      const std::string &relativePath, bool useTombstone = false,
+      const std::string &relativePath,
       const QDateTime &deletedAt = QDateTime::currentDateTime()) override;
   TreeDiff diff(const FileTree &other) const override;
   QString getRootPath() const override;

@@ -6,7 +6,7 @@ public:
     explicit SimpleFileTree(const std::string &rootDir);
     void debug() const override;
     bool addFile(const std::string &relativePath,const QDateTime& mtime = QDateTime::currentDateTime()) override;
-    bool deleteFile(const std::string& relativePath,bool useTombstone = false,const QDateTime& deletedAt = QDateTime::currentDateTime()) override;
+    bool deleteFile(const std::string& relativePath,const QDateTime& deletedAt = QDateTime::currentDateTime()) override;
     TreeDiff diff(const FileTree &other) const override;
     QString getRootPath() const override;
     FileNode *getRoot() const override;

@@ -90,7 +90,7 @@ class SyncRequestMessage : public Message {
 public:
   std::string path;
   QByteArray contents;
-  std::string mtime;
+  QDateTime operationTime;
   FileOperationType operationType;
   FileOperationStatus operationStatus;
   MessageType type() const override;

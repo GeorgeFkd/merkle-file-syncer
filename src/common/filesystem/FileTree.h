@@ -37,7 +37,7 @@ public:
   addFile(const std::string &relativePath,
           const QDateTime &mtime = QDateTime::currentDateTime()) = 0;
   virtual bool
-  deleteFile(const std::string &relativePath, bool useTombstone = false,
+  deleteFile(const std::string &relativePath,
              const QDateTime &deletedAt = QDateTime::currentDateTime()) = 0;
   int fileCount() const;
   virtual TreeDiff diff(const FileTree &other) const = 0;

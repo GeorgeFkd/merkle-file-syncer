@@ -102,7 +102,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     return false;
   }
   database.updateFileMtime(user + "/" + file, mtime);
-  getUserTree(user)->addFile(file.toStdString(),mtime);
+  getUserTree(user)->addFile(file.toStdString(), mtime);
   return true;
 }
 
@@ -135,8 +135,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg,
     return response;
   }
 
-  QDateTime clientMtime =
-      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
+  QDateTime clientMtime = msg->operationTime;
   QDateTime serverMtime = storedMtime.value();
   if (serverMtime > clientMtime) {
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
@@ -150,10 +149,9 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg,
     return response;
   }
 
-  QDateTime clientDeletedAt =
-      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
+  QDateTime clientDeletedAt = msg->operationTime;
   database.markDeleted(storageKey, clientDeletedAt);
-  getUserTree(username)->deleteFile(msg->path, true, clientDeletedAt);
+  getUserTree(username)->deleteFile(msg->path, clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -172,7 +170,7 @@ SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
     return response;
   }
   response.contents = contents.value();
-  response.mtime = serverMtime.toString(Qt::ISODateWithMs).toStdString();
+  response.operationTime = serverMtime;
   response.operationStatus = FileOperationStatus::ServerHasNewer;
   return response;
 }
@@ -189,8 +187,7 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg,
   assert(username != "" &&
          "Token should always be set so we can fetch username on server");
 
-  QDateTime clientMtime =
-      QDateTime::fromString(QString::fromStdString(msg->mtime), Qt::ISODateWithMs);
+  QDateTime clientMtime = msg->operationTime;
 
   if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
@@ -231,7 +228,7 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
       continue;
     }
     QString path = storageKey.mid(prefix.length());
-    tree->deleteFile(path.toStdString(), /*useTombstone=*/true);
+    tree->deleteFile(path.toStdString(), QDateTime::currentDateTime());
   }
 
   auto *raw = tree.get();

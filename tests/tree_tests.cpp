@@ -235,7 +235,7 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
   auto leftTree = this->makeLeftTree();
   auto rightTree = this->makeRightTree();
 
-  ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt",true));
+  ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt"));
   auto found = leftTree->find("foo/baz.txt");
   ASSERT_TRUE(found.has_value());
   auto &[node, isTombstoned] = *found;
@@ -246,7 +246,7 @@ TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
   ASSERT_EQ(diff.onlyInRight.size(), 1);
   ASSERT_EQ(diff.onlyInRight[0], "foo/baz.txt");
 
-  ASSERT_TRUE(leftTree->deleteFile("foo/subdir",true));
+  ASSERT_TRUE(leftTree->deleteFile("foo/subdir"));
   auto foundLeftDir = leftTree->find("foo/subdir");
   ASSERT_TRUE(foundLeftDir.has_value());
   auto &[leftDirNode, isLeftDirTombstoned] = *foundLeftDir;
@@ -349,7 +349,7 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteFile) {
   ASSERT_TRUE(tree->verifyHashes());
 
   auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/baz.txt",true);
+  tree->deleteFile("foo/baz.txt");
 
   ASSERT_NE(hashBefore, tree->rootHash());
   auto found = tree->find("foo/baz.txt");
@@ -366,7 +366,7 @@ TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteDirectory) {
   ASSERT_TRUE(tree->verifyHashes());
 
   auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/subdir",true);
+  tree->deleteFile("foo/subdir");
 
   ASSERT_NE(hashBefore, tree->rootHash());
   auto foundDir = tree->find("foo/subdir");

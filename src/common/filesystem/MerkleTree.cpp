@@ -191,7 +191,7 @@ QByteArray MerkleTree::hashChildren(const FileNode *node) const {
 }
 
 bool MerkleTree::deleteFile(const std::string &relativePath,
-                            bool useTombstone,const QDateTime& deletedAt) {
+                            const QDateTime &deletedAt) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::deleteFile", "root is null");
   Q_ASSERT_X(!relativePath.empty(), "MerkleTree::deleteFile",
              "relativePath is empty");
@@ -227,18 +227,10 @@ bool MerkleTree::deleteFile(const std::string &relativePath,
     qDebug() << "File not found:" << QString::fromStdString(relativePath);
     return false;
   }
-  if (useTombstone) {
-    auto node = (*it).get();
-    markTombstoneRecursively(node, deletedAt);
-    computeHashes(current);
-  } else {
-    current->children.erase(it);
-    recomputeDirHash(current);
-  }
-  // // auto node = (*it).get();
-  // // markTombstoneRecursively(node, QDateTime::currentDateTime());
-  // current->children.erase(it);
-  // recomputeDirHash(current);
+
+  auto node = (*it).get();
+  markTombstoneRecursively(node, deletedAt);
+  computeHashes(current);
   propagateHash(current);
   return true;
 }

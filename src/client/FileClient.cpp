@@ -151,7 +151,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
         qDebug() << "Applied server tombstone for:" << entry.path;
       }
       if (merkleTree) {
-        merkleTree->deleteFile(entry.path.toStdString(), true,
+        merkleTree->deleteFile(entry.path.toStdString(),
                                QDateTime::currentDateTime());
       }
       database.removeFileMtime(entry.path);
@@ -207,10 +207,8 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
       req.token = token;
       req.path = path.toStdString();
       req.contents = {};
-      req.mtime =
-          localMtime.has_value()
-              ? localMtime.value().toString(Qt::ISODateWithMs).toStdString()
-              : "";
+      req.operationTime =
+          localMtime.has_value() ? localMtime.value() : QDateTime();
       req.operationType = FileOperationType::Write;
       req.operationStatus = FileOperationStatus::DoIt;
       commandsToSend.insert(path, req);
@@ -460,8 +458,7 @@ bool FileClient::deleteFile(const QString &user, const QString &path) {
     return false;
   }
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString(), /*useTombstone=*/true,
-                           QDateTime::currentDateTime());
+    merkleTree->deleteFile(path.toStdString(), QDateTime::currentDateTime());
   }
 
   return true;
@@ -580,9 +577,10 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
 
       if (clientHasTombstone && !serverIsTombstone) {
         qDebug() << "Branch taken: clientTombstone=true, serverAlive."
-           << "node->deletedAt=" << node->deletedAt
-           << "serverEntry->mtime=" << serverEntry->mtime
-           << "deletion newer? " << (node->deletedAt > serverEntry->mtime);
+                 << "node->deletedAt=" << node->deletedAt
+                 << "serverEntry->mtime=" << serverEntry->mtime
+                 << "deletion newer? "
+                 << (node->deletedAt > serverEntry->mtime);
         // Client deletion vs server alive — compare timestamps
         if (node->deletedAt > serverEntry->mtime) {
           // Deletion is newer → propagate delete to server
@@ -655,8 +653,7 @@ void FileClient::stageDeleteFor(const QString &path) {
   msg.token = token;
   msg.path = path.toStdString();
   msg.contents = {};
-  msg.mtime =
-      QDateTime::currentDateTime().toString(Qt::ISODateWithMs).toStdString();
+  msg.operationTime = QDateTime::currentDateTime();
   msg.operationType = FileOperationType::Delete;
   msg.operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
@@ -670,9 +667,7 @@ FileClient::buildSyncRequest(const QString &path, FileOperationType op,
   msg.token = token;
   msg.path = path.toStdString();
   msg.contents = contents;
-  msg.mtime = mtime.has_value()
-                  ? mtime.value().toString(Qt::ISODateWithMs).toStdString()
-                  : "";
+  msg.operationTime = mtime.has_value() ? mtime.value() : QDateTime();
   msg.operationType = op;
   msg.operationStatus = FileOperationStatus::DoIt;
   return msg;
@@ -728,8 +723,7 @@ void FileClient::handleNegotiationCompleted() {
     }
     database.removeFileMtime(path);
     if (merkleTree) {
-      merkleTree->deleteFile(path.toStdString(), /*useTombstone=*/true,
-                             QDateTime::currentDateTime());
+      merkleTree->deleteFile(path.toStdString(), QDateTime::currentDateTime());
     }
     qDebug() << "Applied server tombstone via merkle negotiation:" << path;
   }

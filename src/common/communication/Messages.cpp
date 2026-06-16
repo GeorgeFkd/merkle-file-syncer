@@ -147,7 +147,7 @@ QByteArray SyncRequestMessage::serialize() const {
   obj["token"] = token;
   obj["path"] = QString::fromStdString(path);
   obj["contents"] = QString::fromUtf8(contents.toBase64());
-  obj["mtime"] = QString::fromStdString(mtime);
+  obj["mtime"] = operationTime.toString(Qt::ISODateWithMs);
   switch (operationStatus) {
   case FileOperationStatus::DoIt:
     obj["opstatus"] = "doit";
@@ -201,7 +201,7 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString().toStdString();
   msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
-  msg->mtime = obj["mtime"].toString().toStdString();
+  msg->operationTime = QDateTime::fromString(obj["mtime"].toString(),Qt::ISODateWithMs);
 
   if (obj["optype"].toString() == "write")
     msg->operationType = FileOperationType::Write;
