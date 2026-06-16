@@ -110,6 +110,8 @@ private:
   std::unique_ptr<LocalFileStorage> fileStorage;
   FileDb database;
   std::unique_ptr<MerkleTree> merkleTree;
+  QByteArray hashContents(const QByteArray& contents);
+  void buildMerkleTree(const std::string& rootDir,const QString& username);
   QList<QString> discoverNewFiles();
   QList<QString> discoverDeletedFiles();
 

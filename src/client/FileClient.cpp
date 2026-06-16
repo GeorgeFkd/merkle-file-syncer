@@ -4,6 +4,7 @@
 #include "Messages.h"
 #include "TcpClientTransport.h"
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <memory>
 #include <qnamespace.h>
@@ -17,16 +18,31 @@ NegotiationState *FileClient::getNegotiationState() {
   return &negotiationState;
 }
 
+void FileClient::buildMerkleTree(const std::string &rootDir,
+                                 const QString &username) {
+  merkleTree = std::make_unique<MerkleTree>(
+      fileStorage->rootPath(username).toStdString(), username);
+  auto files = fileStorage->listFiles(username);
+  for (const auto &path : files) {
+    auto contents = fileStorage->readFile(username, path);
+    if (!contents.has_value())
+      continue;
+    auto mtime = fileStorage->getMtime(username, path);
+    if (!mtime.has_value())
+      continue;
+    merkleTree->addFile(path.toStdString(), mtime.value(),
+                        hashContents(contents.value()));
+  }
+  assert(merkleTree->verifyHashes());
+}
+
 void FileClient::configure(const FileClientConfig &config) {
   username = config.username;
   password = config.password;
   shouldUseTimer = !config.manualTick;
   syncStrategy = config.syncStrategy;
   fileStorage->setRoot(QDir(config.rootDir).absolutePath());
-  merkleTree = std::make_unique<MerkleTree>(
-      fileStorage->rootPath(username).toStdString());
-  merkleTree->setHasher(FileHasher(fileStorage.get(), username));
-  merkleTree->buildFromStorage(fileStorage.get(), username);
+  buildMerkleTree(fileStorage->rootPath(username).toStdString(), username);
   serverName = config.serverName;
   tickIntervalMs = config.tickIntervalMs;
   database.storeUser(username, password, fileStorage->rootPath(username));
@@ -446,12 +462,20 @@ std::optional<QDateTime> FileClient::writeFile(const QString &user,
 
   // we should not update the database, let the client discover it.
   if (merkleTree) {
-    merkleTree->addFile(path.toStdString(), mtime.value());
+    merkleTree->addFile(path.toStdString(), mtime.value(),
+                        hashContents(contents));
   }
   return mtime.value();
 }
 
-std::optional<QDateTime> FileClient::deleteFile(const QString &user, const QString &path) {
+QByteArray FileClient::hashContents(const QByteArray &contents) {
+  QByteArray hash =
+      QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+  return hash;
+}
+
+std::optional<QDateTime> FileClient::deleteFile(const QString &user,
+                                                const QString &path) {
   assert(user == username && "DeleteFile for client should pass the username "
                              "that it was configured with");
   if (!fileStorage->deleteFile(username, path)) {
@@ -465,8 +489,6 @@ std::optional<QDateTime> FileClient::deleteFile(const QString &user, const QStri
 
   return deletedAt;
 }
-
-
 
 void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle response at client";

@@ -63,6 +63,8 @@ private:
   std::unordered_map<QString, std::unique_ptr<MerkleTree>, QStringHash>
       userTrees;
   MerkleTree *getUserTree(const QString &username);
+  std::unique_ptr<MerkleTree> buildMerkleTree(const QString& username);
+  QByteArray hashContents(const QByteArray& contents);
 
   // --- Sync request handling ---
   SyncRequestMessage handleSyncRequest(SyncRequestMessage *msg);

@@ -4,11 +4,13 @@
 class MerkleTree : public FileTree {
 public:
   explicit MerkleTree(const std::string &rootDir);
+  explicit MerkleTree(const std::string& rootDir,const QString& username);
   explicit MerkleTree();
   void debug() const override;
   // bool addFile(const std::string &relativePath) override;
   bool addFile(const std::string &relativePath,
                const QDateTime &mtime = QDateTime::currentDateTime()) override;
+  bool addFile(const std::string& relativePath,const QDateTime& mtime,const QByteArray& hash);
   bool deleteFile(
       const std::string &relativePath,
       const QDateTime &deletedAt = QDateTime::currentDateTime()) override;

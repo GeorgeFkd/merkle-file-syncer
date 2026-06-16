@@ -114,6 +114,15 @@ TreeDiff MerkleTree::merkleNegotiateDiffs(const MerkleTree &lhs,
   return result;
 }
 
+MerkleTree::MerkleTree(const std::string &rootDir, const QString &username) {
+  root = std::make_unique<FileNode>();
+  root->type = FileType::Directory;
+  root->path = username;
+  root->parent = nullptr;
+  root->hash = hashChildren(root.get());
+  //no need to call afterBuild()
+}
+
 MerkleTree::MerkleTree(const std::string &rootDir) {
   rootPath = QString::fromStdString(rootDir);
 }
@@ -174,9 +183,11 @@ bool MerkleTree::verifyNode(const FileNode *node) const {
     }
     return true;
   }
-
-  if (node->hash != hashChildren(node)) {
-    qDebug() << "Hash mismatch for directory:" << node->path;
+  auto expected = hashChildren(node);
+  if (node->hash != expected) {
+    qDebug() << "Hash mismatch for directory:" << getRelativePath(node)
+             << "stored:" << node->hash.toHex().left(16)
+             << "expected:" << expected.toHex().left(16);
     return false;
   }
   return true;
@@ -263,6 +274,64 @@ QByteArray MerkleTree::hashFile(const QString &relativePath) const {
   auto contents = f.readAll();
   f.close();
   return QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+}
+
+bool MerkleTree::addFile(const std::string &relativePath,
+                         const QDateTime &mtime, const QByteArray &hash) {
+  Q_ASSERT_X(root != nullptr, "MerkleTree::addFile",
+             "root is null — tree not built");
+  Q_ASSERT_X(!relativePath.empty(), "MerkleTree::addFile",
+             "relativePath is empty");
+
+  auto parts =
+      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+  FileNode *current = root.get();
+  for (int i = 0; i < parts.size(); i++) {
+    const auto &part = parts[i];
+    FileNode *found = nullptr;
+    for (const auto &child : current->children) {
+      if (child->path == part) {
+        found = child.get();
+        break;
+      }
+    }
+    if (!found) {
+      auto newNode = std::make_unique<FileNode>();
+      newNode->path = part;
+      newNode->parent = current;
+      newNode->mtime = mtime;
+      newNode->type =
+          (i == parts.size() - 1) ? FileType::File : FileType::Directory;
+      if (newNode->type == FileType::File) {
+        newNode->hash = hash;
+      }
+      current->children.push_back(std::move(newNode));
+      current = current->children.back().get();
+      if (current->type == FileType::File) {
+        qDebug() << "Propagating hash of: " << current->path << ".";
+        propagateHash(current);
+        return true;
+      }
+    } else {
+      current = found;
+      if (i == parts.size() - 1) {
+        current->mtime = mtime;
+        if (current->isDeleted) {
+          current->isDeleted = false;
+          current->deletedAt = QDateTime();
+          current->type = FileType::File;
+        }
+
+        if (current->type == FileType::File) {
+          current->hash = hash;
+          qDebug() << "Propagating hash of: " << current->path << " (updated).";
+          propagateHash(current);
+          return true;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 bool MerkleTree::addFile(const std::string &relativePath,

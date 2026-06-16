@@ -4,6 +4,7 @@
 #include "Messages.h"
 #include "TcpServerTransport.h"
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <memory>
@@ -102,7 +103,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     return false;
   }
   database.updateFileMtime(user + "/" + file, mtime);
-  getUserTree(user)->addFile(file.toStdString(), mtime);
+  getUserTree(user)->addFile(file.toStdString(), mtime, hashContents(contents));
   return true;
 }
 
@@ -203,21 +204,39 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg,
   }
 
   getUserTree(username)->addFile(
-      QString::fromStdString(msg->path).toStdString(), clientMtime);
+      QString::fromStdString(msg->path).toStdString(), clientMtime,
+      hashContents(msg->contents));
   database.updateFileMtime(storageKey, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
+QByteArray FileServer::hashContents(const QByteArray &contents) {
+  QByteArray hash =
+      QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+  return hash;
+}
 
-MerkleTree *FileServer::getUserTree(const QString &username) {
-  auto it = userTrees.find(username);
-  if (it != userTrees.end()) {
-    return it->second.get();
+std::unique_ptr<MerkleTree>
+FileServer::buildMerkleTree(const QString &username) {
+  auto tree = std::make_unique<MerkleTree>("", username);
+
+  auto files = fileStorage->listFiles(username);
+  for (const auto &path : files) {
+    auto contents = fileStorage->readFile(username, path);
+    if (!contents.has_value()) {
+      qDebug() << "buildMerkleTree: missing storage for tracked path" << path;
+      continue;
+    }
+    auto storageKey = username + "/" + path;
+    auto mtime = database.readMtime(storageKey);
+    if (!mtime.has_value()) {
+      qDebug() << "getUserTree: no mtime for path" << path;
+      continue;
+    }
+
+    tree->addFile(path.toStdString(), mtime.value(),
+                  hashContents(contents.value()));
   }
-
-  auto tree = std::make_unique<MerkleTree>(username.toStdString());
-  tree->setHasher(FileHasher(fileStorage.get(), username));
-  tree->buildFromStorage(fileStorage.get(), username);
 
   // Apply DB tombstones to the tree
   auto tombstones = database.allTombstones();
@@ -228,8 +247,20 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
       continue;
     }
     QString path = storageKey.mid(prefix.length());
-    tree->deleteFile(path.toStdString(), QDateTime::currentDateTime());
+    tree->deleteFile(path.toStdString(), it.value());
   }
+
+  assert(tree->verifyHashes());
+  return tree;
+}
+
+MerkleTree *FileServer::getUserTree(const QString &username) {
+  auto it = userTrees.find(username);
+  if (it != userTrees.end()) {
+    return it->second.get();
+  }
+
+  auto tree = buildMerkleTree(username);
 
   auto *raw = tree.get();
   userTrees.emplace(username, std::move(tree));

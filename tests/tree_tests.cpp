@@ -46,10 +46,8 @@ protected:
   }
 
   void TearDown() override {
-    if (!HasFailure()) {
-      rootDir.removeRecursively();
-      storage->cleanup(user);
-    }
+    rootDir.removeRecursively();
+    storage->cleanup(user);
   }
 
   void applyOperations(const QString &ops) {
