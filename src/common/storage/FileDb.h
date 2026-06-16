@@ -5,6 +5,9 @@
 #include <QSet>
 #include <QString>
 #include <optional>
+
+//TODO: make all methods take a user as key
+//and do actual namespacing here(now the client and server do it)
 class FileDb {
 public:
   // file -> mtime
