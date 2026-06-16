@@ -14,6 +14,8 @@
 #include <QUuid>
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
+#include <QThread>
+
 
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -414,8 +416,8 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesDeletedFiles) {
   this->fileServer.writeFile(this->username, "readme.txt", "readme",
                              serverWriteTime);
 
-  client->deleteFile(this->username, "docs/notes.txt");
-  client->deleteFile(this->username, "readme.txt");
+  auto notesDeletedAt = client->deleteFile(this->username, "docs/notes.txt");
+  auto readmeDeletedAt = client->deleteFile(this->username, "readme.txt");
 
   client->start();
   QCoreApplication::processEvents();
@@ -428,9 +430,20 @@ TYPED_TEST(MerkleSyncTest, negotiationIdentifiesDeletedFiles) {
   ASSERT_EQ(result->diffEntries.onlyInRight.size(), 0);
   ASSERT_EQ(result->diffEntries.modified.size(), 0);
   ASSERT_EQ(result->diffEntries.deletionWinsLeft.size(), 2);
-  ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("docs/notes.txt"));
-  ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("readme.txt"));
   ASSERT_EQ(result->diffEntries.deletionWinsRight.size(), 0);
+
+  QHash<QString, QDateTime> deletions;
+  for (const auto &[path, deletedAt] : result->diffEntries.deletionWinsLeft) {
+    deletions.insert(path, deletedAt);
+  }
+
+  ASSERT_TRUE(deletions.contains("docs/notes.txt"));
+  ASSERT_TRUE(deletions.contains("readme.txt"));
+  ASSERT_EQ(deletions["docs/notes.txt"], notesDeletedAt.value());
+  ASSERT_EQ(deletions["readme.txt"], readmeDeletedAt.value());
+
+  // ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("docs/notes.txt"));
+  // ASSERT_TRUE(result->diffEntries.deletionWinsLeft.contains("readme.txt"));
 }
 TYPED_TEST(MerkleSyncTest, negotiationWithEmptyServer) {
   auto client = this->makeClient();
@@ -474,6 +487,10 @@ protected:
     deviceA = makeClient("device-a");
     deviceB = makeClient("device-b");
     deviceC = makeClient("device-c");
+  }
+
+  void addMinimumDelayForTimestampOrdering() {
+    QThread::msleep(1); // ensure subsequent operations have strictly newer wall-clock time
   }
 
   void TearDown() override {
@@ -601,6 +618,8 @@ TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
                   ->readFile(this->username, "shared.txt")
                   .has_value());
 
+  
+  this->addMinimumDelayForTimestampOrdering();
   // A deletes
   this->deviceA->deleteFile(this->username, "shared.txt");
   this->tickAndWait(*this->deviceA);
@@ -624,6 +643,7 @@ TYPED_TEST(MultiDeviceSyncTest, directoryDeletionPropagatesAcrossDevices) {
   this->tickAndWait(*this->deviceB);
   this->tickAndWait(*this->deviceC);
 
+  this->addMinimumDelayForTimestampOrdering();
   this->deviceA->deleteFile(this->username, "subdir/file1.txt");
   this->deviceA->deleteFile(this->username, "subdir/file2.txt");
   this->tickAndWait(*this->deviceA);

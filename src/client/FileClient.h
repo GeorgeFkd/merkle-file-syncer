@@ -8,14 +8,19 @@
 #include <QString>
 #include <QTimer>
 
+struct DeletionEntry {
+  QString path;
+  QDateTime deletedAt;
+};
+
 struct NodesDiff {
   // the bool is to signal whether it is a file or not(true -> file, false
   // ->directory) so we can later ask the server for whole directories
   QList<QPair<bool, QString>> onlyInLeft;
   QList<QPair<bool, QString>> onlyInRight;
   QList<QString> modified;
-  QList<QString> deletionWinsLeft;
-  QList<QString> deletionWinsRight;
+  QList<DeletionEntry> deletionWinsLeft;
+  QList<DeletionEntry> deletionWinsRight;
 };
 
 struct NegotiationState {
@@ -55,9 +60,9 @@ public:
   void clientTick();
   void setupConnections();
 
-  bool writeFile(const QString &user, const QString &path,
+  std::optional<QDateTime> writeFile(const QString &user, const QString &path,
                  const QByteArray &contents);
-  bool deleteFile(const QString &user, const QString &path);
+  std::optional<QDateTime> deleteFile(const QString &user, const QString &path);
 
   LocalFileStorage *getStorage();
   NegotiationState *getNegotiationState();
@@ -117,7 +122,7 @@ private:
                                       const std::optional<QDateTime> &mtime);
   void stageUploadFor(const QString &path);
   void stageDownloadFor(const QString &path);
-  void stageDeleteFor(const QString &path);
+  void stageDeleteFor(const QString &path,const QDateTime& deletedAt);
   void stageConflictResolution(const QString &path);
   void stageDirectoryUpload(const QString &dirPath);
   void stageNewFilesForSending(const QList<QString> &files);
