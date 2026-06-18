@@ -102,7 +102,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     qDebug() << "writeFile: storage write failed for" << file;
     return false;
   }
-  database.updateFileMtime(user + "/" + file, mtime);
+  database.updateFileMtime(user, file, mtime);
   getUserTree(user)->addFile(file.toStdString(), mtime, hashContents(contents));
   return true;
 }
@@ -117,8 +117,7 @@ QString FileServer::getUserFrom(Message *msg) {
 }
 
 SyncRequestMessage
-FileServer::handleDeleteRequest(SyncRequestMessage *msg,
-                                const QString &storageKey,
+FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
                                 const std::optional<QDateTime> &storedMtime) {
   SyncRequestMessage response;
   response.path = msg->path;
@@ -151,7 +150,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg,
   }
 
   QDateTime clientDeletedAt = msg->operationTime;
-  database.markDeleted(storageKey, clientDeletedAt);
+  database.markDeleted(username, path, clientDeletedAt);
   getUserTree(username)->deleteFile(msg->path, clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
@@ -177,8 +176,7 @@ SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
 }
 
 SyncRequestMessage
-FileServer::handleWriteRequest(SyncRequestMessage *msg,
-                               const QString &storageKey,
+FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                                const std::optional<QDateTime> &storedMtime) {
   SyncRequestMessage response;
   response.path = msg->path;
@@ -203,10 +201,9 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg,
     return response;
   }
 
-  getUserTree(username)->addFile(
-      QString::fromStdString(msg->path).toStdString(), clientMtime,
-      hashContents(msg->contents));
-  database.updateFileMtime(storageKey, clientMtime);
+  getUserTree(username)->addFile(path.toStdString(), clientMtime,
+                                 hashContents(msg->contents));
+  database.updateFileMtime(username, path, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -227,8 +224,7 @@ FileServer::buildMerkleTree(const QString &username) {
       qDebug() << "buildMerkleTree: missing storage for tracked path" << path;
       continue;
     }
-    auto storageKey = username + "/" + path;
-    auto mtime = database.readMtime(storageKey);
+    auto mtime = database.readMtime(username, path);
     if (!mtime.has_value()) {
       qDebug() << "getUserTree: no mtime for path" << path;
       continue;
@@ -239,15 +235,10 @@ FileServer::buildMerkleTree(const QString &username) {
   }
 
   // Apply DB tombstones to the tree
-  auto tombstones = database.allTombstones();
+  auto tombstones = database.allTombstones(username);
   QString prefix = username + "/";
   for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-    const QString &storageKey = it.key();
-    if (!storageKey.startsWith(prefix)) {
-      continue;
-    }
-    QString path = storageKey.mid(prefix.length());
-    tree->deleteFile(path.toStdString(), it.value());
+    tree->deleteFile(it.key().toStdString(), it.value());
   }
 
   assert(tree->verifyHashes());
@@ -359,20 +350,14 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
     if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/")) {
       continue;
     }
-    auto storageKey = username + "/" + path;
-    auto mtime = database.readMtime(storageKey);
+    auto mtime = database.readMtime(username, path);
     assert(mtime.has_value() && "File in storage must have a DB mtime entry");
     response.entries.append({path, mtime.value(), false});
   }
 
-  auto tombstones = database.allTombstones();
+  auto tombstones = database.allTombstones(username);
   for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-    const QString &storageKey = it.key();
-    QString prefix = username + "/";
-    if (!storageKey.startsWith(prefix)) {
-      continue;
-    }
-    QString path = storageKey.mid(prefix.length());
+    const QString &path = it.key();
     if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/")) {
       continue;
     }
@@ -391,8 +376,8 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   assert(username != "" &&
          "Token should always be set so we can fetch username on server");
 
-  QString storageKey = username + "/" + QString::fromStdString(msg->path);
-  auto storedMtime = database.readMtime(storageKey);
+  auto path = QString::fromStdString(msg->path);
+  auto storedMtime = database.readMtime(username, path);
 
   SyncRequestMessage response;
   response.path = msg->path;
@@ -400,9 +385,9 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   response.operationType = msg->operationType;
 
   if (msg->operationType == FileOperationType::Delete) {
-    return handleDeleteRequest(msg, storageKey, storedMtime);
+    return handleDeleteRequest(msg, path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
-    return handleWriteRequest(msg, storageKey, storedMtime);
+    return handleWriteRequest(msg, path, storedMtime);
   }
 
   return response;

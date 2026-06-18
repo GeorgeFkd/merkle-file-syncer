@@ -156,6 +156,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
   if (inMerkleApply) {
     for (const auto &entry : msg->entries) {
       if (!entry.deleted) {
+        qDebug() << "Hello";
         resolveServerHasFileClientDoesnt(entry.path);
         continue;
       }
@@ -167,10 +168,9 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
         qDebug() << "Applied server tombstone for:" << entry.path;
       }
       if (merkleTree) {
-        merkleTree->deleteFile(entry.path.toStdString(),
-                               QDateTime::currentDateTime());
+        merkleTree->deleteFile(entry.path.toStdString(), entry.mtime);
       }
-      database.removeFileMtime(entry.path);
+      database.removeFileMtime(username, entry.path);
     }
 
     pendingDirectoryRequests--;
@@ -191,7 +191,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
       fileStorage->deleteFile(username, entry.path);
       qDebug() << "Applied server tombstone for:" << entry.path;
     }
-    database.removeFileMtime(entry.path);
+    database.removeFileMtime(username, entry.path);
   }
   // Build a set of server paths and a lookup for mtimes
   QHash<QString, QDateTime> serverFiles;
@@ -206,7 +206,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     const QString &path = it.key();
     const QDateTime &serverMtime = it.value();
 
-    auto localMtime = database.readMtime(path);
+    auto localMtime = database.readMtime(username, path);
     bool needsDownload = false;
 
     if (!localMtime.has_value()) {
@@ -270,7 +270,7 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
     qDebug() << "Write acked for:" << path;
     auto localMtime = fileStorage->getMtime(username, path);
     if (localMtime.has_value()) {
-      database.updateFileMtime(path, localMtime.value());
+      database.updateFileMtime(username, path, localMtime.value());
     } else {
       qDebug() << "handleWriteResponse: no local mtime after write for" << path;
     }
@@ -293,7 +293,7 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   switch (msg->operationStatus) {
   case FileOperationStatus::Done: {
     qDebug() << "Delete acked for:" << path;
-    database.removeFileMtime(path);
+    database.removeFileMtime(username, path);
     break;
   }
   case FileOperationStatus::ServerHasNewer: {
@@ -320,7 +320,7 @@ void FileClient::applyServerVersion(const QString &path,
   }
   auto localMtime = fileStorage->getMtime(username, path);
   if (localMtime.has_value()) {
-    database.updateFileMtime(path, localMtime.value());
+    database.updateFileMtime(username, path, localMtime.value());
   } else {
     qDebug() << "applyServerVersion: no local mtime after write for" << path;
   }
@@ -331,14 +331,14 @@ QList<QString> FileClient::discoverNewFiles() {
     QList<QString> newFiles;
     auto files = fileStorage->listFiles(username);
     for (const auto &relativePath : files) {
-      auto storedMtime = database.readMtime(relativePath);
+      auto storedMtime = database.readMtime(username, relativePath);
       auto localFileMtime = fileStorage->getMtime(username, relativePath);
       if (!localFileMtime.has_value())
         continue;
       if (storedMtime.has_value() &&
           storedMtime.value() == localFileMtime.value())
         continue;
-      database.updateFileMtime(relativePath, localFileMtime.value());
+      database.updateFileMtime(username, relativePath, localFileMtime.value());
       qDebug() << "Discovered new/modified file:" << relativePath
                << "mtime:" << localFileMtime.value();
       newFiles.append(relativePath);
@@ -349,7 +349,7 @@ QList<QString> FileClient::discoverNewFiles() {
 }
 
 QList<QString> FileClient::discoverDeletedFiles() {
-  auto trackedFiles = database.allTrackedFiles();
+  auto trackedFiles = database.allTrackedFiles(username);
   qDebug() << "Tracked files: " << trackedFiles;
   if (syncStrategy == SyncStrategy::Naive) {
     auto fileList = fileStorage->listFiles(username);
@@ -387,7 +387,7 @@ void FileClient::stageUploadFor(const QString &path) {
 }
 
 void FileClient::stageDownloadFor(const QString &path) {
-  auto mtime = database.readMtime(path);
+  auto mtime = database.readMtime(username, path);
   commandsToSend.insert(
       path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
 }
@@ -397,8 +397,9 @@ void FileClient::stageConflictResolution(const QString &path) {
 }
 
 void FileClient::resolveServerHasFileClientDoesnt(const QString &path) {
-  if (database.readMtime(path).has_value() &&
-      !merkleTree->find(path.toStdString()).has_value()) {
+  auto found = merkleTree->find(path.toStdString());
+  bool clientHasLiveNode = found.has_value() && !std::get<1>(*found);
+  if (database.readMtime(username, path).has_value() && !clientHasLiveNode) {
     stageDeleteFor(path, QDateTime::currentDateTime());
   } else {
     stageDownloadFor(path);
@@ -679,7 +680,7 @@ void FileClient::requestDirectoryList(const QString &dirPath) {
 
 void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
-  auto mtime = database.readMtime(path);
+  auto mtime = database.readMtime(username, path);
   SyncRequestMessage msg;
   msg.token = token;
   msg.path = path.toStdString();
@@ -754,7 +755,7 @@ void FileClient::handleNegotiationCompleted() {
     if (fileStorage->readFile(username, path).has_value()) {
       fileStorage->deleteFile(username, path);
     }
-    database.removeFileMtime(path);
+    database.removeFileMtime(username, path);
     if (merkleTree) {
       merkleTree->deleteFile(path.toStdString(), deletedAt);
     }

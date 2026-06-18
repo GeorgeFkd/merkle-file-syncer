@@ -3,12 +3,10 @@
 #include "FileStorage.h"
 #include "MerkleTree.h"
 #include "Messages.h"
+#include "ServerTransport.h"
 #include "SessionRegistry.h"
 #include <QLocalServer>
 #include <QLocalSocket>
-#include "ServerTransport.h"
-
-
 
 struct FileServerConfig {
   TransportProtocol protocol;
@@ -36,18 +34,18 @@ private:
   std::unique_ptr<ServerTransport> transport;
   QLocalServer server;
   QString serverUrl;
-  QHash<QIODevice*, QByteArray> buffers;
+  QHash<QIODevice *, QByteArray> buffers;
   void setupConnections();
   void setupSocketConnections();
-  void onSocketDisconnected(QIODevice* socket);
-  void onSocketReadyRead(QIODevice* socket);
+  void onSocketDisconnected(QIODevice *socket);
+  void onSocketReadyRead(QIODevice *socket);
   void onNewConnection();
-  void dispatch(QIODevice* socket,Message *msg);
+  void dispatch(QIODevice *socket, Message *msg);
   void setupNewSocketConnection(QLocalSocket *socket);
 
   // --- Auth / sessions ---
   SessionRegistry sessionStore;
-  QHash<QIODevice*, QString> socketToTokenMap;
+  QHash<QIODevice *, QString> socketToTokenMap;
   AuthResponseMessage handleAuth(AuthMessage *msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
@@ -63,20 +61,23 @@ private:
   std::unordered_map<QString, std::unique_ptr<MerkleTree>, QStringHash>
       userTrees;
   MerkleTree *getUserTree(const QString &username);
-  std::unique_ptr<MerkleTree> buildMerkleTree(const QString& username);
-  QByteArray hashContents(const QByteArray& contents);
+  std::unique_ptr<MerkleTree> buildMerkleTree(const QString &username);
+  QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---
   SyncRequestMessage handleSyncRequest(SyncRequestMessage *msg);
   SyncRequestMessage
-  handleWriteRequest(SyncRequestMessage *msg, const QString &storageKey,
+  handleWriteRequest(SyncRequestMessage *msg,
+                     const QString &path,
                      const std::optional<QDateTime> &storedMtime);
   SyncRequestMessage
-  handleDeleteRequest(SyncRequestMessage *msg, const QString &storageKey,
+  handleDeleteRequest(SyncRequestMessage *msg,
+                      const QString &path,
                       const std::optional<QDateTime> &storedMtime);
   SyncRequestMessage trySendNewerFile(const QString &username,
                                       const QString &path,
-                                      const QDateTime &serverMtime,FileOperationType op);
+                                      const QDateTime &serverMtime,
+                                      FileOperationType op);
 
   // --- Listing ---
   ListResponseMessage handleListRequest(ListRequestMessage *msg);
