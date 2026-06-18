@@ -1,419 +1,126 @@
-#include "FileHasher.h"
-#include "FileTree.h"
-#include "FileTreeFactory.h"
-#include "LocalFileStorage.h"
-#include <QCoreApplication>
-#include <QDir>
-#include <QEventLoop>
-#include <QFile>
-#include <QTimer>
-#include <QUuid>
+#include "MerkleTree.h"
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <gtest/gtest.h>
-#include <rapidcheck/gtest.h>
 
-class TestOperations {
-public:
-  static void applyOperations(FileStorage *storage, const QString &user,
-                              const QString &ops) {
-    for (const auto &line : ops.split('\n', Qt::SkipEmptyParts)) {
-      auto parts = line.trimmed().split(' ');
-      if (parts.size() < 2)
-        continue;
-      QString path = parts[0];
-      QString op = parts.last();
-      if (op == "Write") {
-        QString contents = parts.size() > 2 ? parts[1] : "";
-        storage->writeFile(user, path, contents.toUtf8());
-      } else if (op == "Delete") {
-        storage->deleteFile(user, path);
-      }
-    }
-  }
-};
+namespace {
 
-// ─── FilesystemFixture ───────────────────────────────────────────────────────
+QByteArray defaultHash(const QString &content) {
+  return QCryptographicHash::hash(content.toUtf8(), QCryptographicHash::Sha256);
+}
 
-template <typename TreeImplTag>
-class FilesystemFixture : public ::testing::Test {
-protected:
-  void SetUp() override {
-    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    rootDir =
-        QDir(QCoreApplication::applicationDirPath() + "/test_fs/" + runId);
-    QDir().mkpath(rootDir.path());
-    storage = std::make_shared<LocalFileStorage>();
-    storage->setRoot(rootDir.path());
-  }
+QDateTime now() { return QDateTime::currentDateTime(); }
 
-  void TearDown() override {
-    rootDir.removeRecursively();
-    storage->cleanup(user);
-  }
+} // namespace
 
-  void applyOperations(const QString &ops) {
-    TestOperations::applyOperations(storage.get(), user, ops);
-  }
+TEST(MerkleTree, buildFromAddFileDiscoversFilesCorrectly) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  tree.addFile("foo/baz.txt", now(), defaultHash("world"));
+  tree.addFile("foo/subdir/nested.txt", now(), defaultHash("nested"));
 
-  std::unique_ptr<FileTree> makeTree() {
-    auto tree = FileTreeFactory<TreeImplTag::type>::create(
-        storage->rootPath(user).toStdString());
-    tree->buildFromStorage(storage.get(), user);
-    return tree;
-  }
+  ASSERT_EQ(tree.fileCount(), 3);
 
-  QDir rootDir;
-  std::shared_ptr<LocalFileStorage> storage;
-  QString user = "testuser";
-};
-
-using TreeImplementations = ::testing::Types<VanillaTreeTag, MerkleTreeTagV1>;
-TYPED_TEST_SUITE(FilesystemFixture, TreeImplementations);
-
-TYPED_TEST(FilesystemFixture, buildFromDiscoversFilesCorrectly) {
-  this->applyOperations(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-        foo/subdir/nested.txt nested Write
-    )");
-
-  auto tree = this->makeTree();
-  ASSERT_EQ(tree->fileCount(), 3);
-
-  // Existing live files: found, not tombstoned
-  {
-    auto found = tree->find("foo/bar.txt");
-    ASSERT_TRUE(found.has_value());
-    auto &[node, isTombstoned] = *found;
-    ASSERT_FALSE(isTombstoned);
-  }
-  {
-    auto found = tree->find("foo/baz.txt");
-    ASSERT_TRUE(found.has_value());
-    auto &[node, isTombstoned] = *found;
-    ASSERT_FALSE(isTombstoned);
-  }
-  {
-    auto found = tree->find("foo/subdir/nested.txt");
+  for (const auto &path :
+       {"foo/bar.txt", "foo/baz.txt", "foo/subdir/nested.txt", "foo"}) {
+    auto found = tree.find(path);
     ASSERT_TRUE(found.has_value());
     auto &[node, isTombstoned] = *found;
     ASSERT_FALSE(isTombstoned);
   }
 
-  // Directory node: found, not tombstoned
-  {
-    auto found = tree->find("foo");
-    ASSERT_TRUE(found.has_value());
-    auto &[node, isTombstoned] = *found;
-    ASSERT_FALSE(isTombstoned);
-  }
-
-  // Non-existent paths: not found at all
-  ASSERT_FALSE(tree->find("fool").has_value());
-  ASSERT_FALSE(tree->find("foo/new.txt").has_value());
+  ASSERT_FALSE(tree.find("fool").has_value());
+  ASSERT_FALSE(tree.find("foo/new.txt").has_value());
 }
 
-TYPED_TEST(FilesystemFixture, addFileBehaviorWorksAsExpected) {
-  this->applyOperations(R"(
-        foo/bar.txt hello Write
-    )");
+TEST(MerkleTree, addFileBehaviorWorksAsExpected) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
 
-  auto tree = this->makeTree();
-  this->storage->writeFile(this->user, "foo/new.txt", "new content");
-  ASSERT_TRUE(tree->addFile("foo/new.txt"));
-  ASSERT_TRUE(tree->find("foo/new.txt").has_value());
+  ASSERT_TRUE(tree.addFile("foo/new.txt", now(), defaultHash("new content")));
+
+  auto found = tree.find("foo/new.txt");
+  ASSERT_TRUE(found.has_value());
+  auto &[node, isTombstoned] = *found;
+  ASSERT_FALSE(isTombstoned);
 }
 
-// ─── FilesystemDiffFixture ───────────────────────────────────────────────────
+TEST(MerkleTree, rootHashChangesOnAddFile) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  ASSERT_TRUE(tree.verifyHashes());
 
-template <typename TreeImplTag>
-class FilesystemDiffFixture : public ::testing::Test {
-protected:
-  void SetUp() override {
-    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    leftStorage = std::make_shared<LocalFileStorage>();
-    leftStorage->setRoot(QCoreApplication::applicationDirPath() +
-                         "/test_diff_left/" + runId);
-    rightStorage = std::make_shared<LocalFileStorage>();
-    rightStorage->setRoot(QCoreApplication::applicationDirPath() +
-                          "/test_diff_right/" + runId);
-  }
+  auto hashBefore = tree.rootHash();
+  tree.addFile("foo/new.txt", now(), defaultHash("new content"));
 
-  void TearDown() override {
-    if (!HasFailure()) {
-      leftStorage->cleanup(user);
-      rightStorage->cleanup(user);
-    }
-  }
-
-  void applyLeft(const QString &ops) {
-    TestOperations::applyOperations(leftStorage.get(), user, ops);
-  }
-
-  void applyRight(const QString &ops) {
-    TestOperations::applyOperations(rightStorage.get(), user, ops);
-  }
-
-  std::unique_ptr<FileTree> makeLeftTree() {
-    auto tree = FileTreeFactory<TreeImplTag::type>::create(
-        leftStorage->rootPath(user).toStdString());
-    tree->buildFromStorage(leftStorage.get(), user);
-    return tree;
-  }
-
-  std::unique_ptr<FileTree> makeRightTree() {
-    auto tree = FileTreeFactory<TreeImplTag::type>::create(
-        rightStorage->rootPath(user).toStdString());
-    tree->buildFromStorage(rightStorage.get(), user);
-    return tree;
-  }
-
-  std::shared_ptr<LocalFileStorage> leftStorage;
-  std::shared_ptr<LocalFileStorage> rightStorage;
-  QString user = "testuser";
-};
-
-TYPED_TEST_SUITE(FilesystemDiffFixture, TreeImplementations);
-
-TYPED_TEST(FilesystemDiffFixture, diffIdentifiesChanges) {
-  this->applyLeft(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-        foo/subdir/nested.txt nested Write
-    )");
-  this->applyRight(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt changed Write
-        foo/subdir/new.txt newfile Write
-    )");
-
-  auto leftTree = this->makeLeftTree();
-  auto rightTree = this->makeRightTree();
-  auto diff = leftTree->diff(*rightTree);
-
-  ASSERT_EQ(diff.modified.size(), 1);
-  ASSERT_EQ(diff.modified[0], "foo/baz.txt");
-  ASSERT_EQ(diff.onlyInLeft.size(), 1);
-  ASSERT_EQ(diff.onlyInLeft[0], "foo/subdir/nested.txt");
-  ASSERT_EQ(diff.onlyInRight.size(), 1);
-  ASSERT_EQ(diff.onlyInRight[0], "foo/subdir/new.txt");
+  ASSERT_NE(hashBefore, tree.rootHash());
+  ASSERT_TRUE(tree.verifyHashes());
 }
 
-TYPED_TEST(FilesystemDiffFixture, addFileWithWriteReflectsInDiff) {
-  this->applyLeft(R"(foo/bar.txt hello Write)");
-  this->applyRight(R"(foo/bar.txt hello Write)");
+TEST(MerkleTree, rootHashChangesOnDeleteFile) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  tree.addFile("foo/baz.txt", now(), defaultHash("world"));
+  ASSERT_TRUE(tree.verifyHashes());
 
-  auto leftTree = this->makeLeftTree();
-  auto rightTree = this->makeRightTree();
+  auto hashBefore = tree.rootHash();
+  tree.deleteFile("foo/baz.txt", now());
 
-  auto diff = leftTree->diff(*rightTree);
-  ASSERT_EQ(diff.onlyInLeft.size(), 0);
-  ASSERT_EQ(diff.onlyInRight.size(), 0);
-  ASSERT_EQ(diff.modified.size(), 0);
-
-  this->leftStorage->writeFile(this->user, "foo/new.txt", "new content");
-  leftTree->addFile("foo/new.txt");
-
-  diff = leftTree->diff(*rightTree);
-  ASSERT_EQ(diff.onlyInLeft.size(), 1);
-  ASSERT_EQ(diff.onlyInLeft[0], "foo/new.txt");
-}
-
-TYPED_TEST(FilesystemDiffFixture, deleteFileReflectsInDiff) {
-  this->applyLeft(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-        foo/subdir/nested.txt nested Write
-    )");
-  this->applyRight(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-        foo/subdir/nested.txt nested Write
-    )");
-
-  auto leftTree = this->makeLeftTree();
-  auto rightTree = this->makeRightTree();
-
-  ASSERT_TRUE(leftTree->deleteFile("foo/baz.txt"));
-  auto found = leftTree->find("foo/baz.txt");
+  ASSERT_NE(hashBefore, tree.rootHash());
+  auto found = tree.find("foo/baz.txt");
   ASSERT_TRUE(found.has_value());
   auto &[node, isTombstoned] = *found;
   ASSERT_TRUE(isTombstoned);
-
-  auto diff = leftTree->diff(*rightTree);
-
-  ASSERT_EQ(diff.onlyInRight.size(), 1);
-  ASSERT_EQ(diff.onlyInRight[0], "foo/baz.txt");
-
-  ASSERT_TRUE(leftTree->deleteFile("foo/subdir"));
-  auto foundLeftDir = leftTree->find("foo/subdir");
-  ASSERT_TRUE(foundLeftDir.has_value());
-  auto &[leftDirNode, isLeftDirTombstoned] = *foundLeftDir;
-  ASSERT_TRUE(isLeftDirTombstoned);
-
-  auto foundLeftFile = leftTree->find("foo/subdir/nested.txt");
-  ASSERT_TRUE(foundLeftFile.has_value());
-  auto &[leftFileNode, isLeftFileTombstoned] = *foundLeftFile;
-  ASSERT_TRUE(isLeftFileTombstoned);
-
-  diff = leftTree->diff(*rightTree);
-  ASSERT_EQ(diff.onlyInRight.size(), 2);
+  ASSERT_TRUE(tree.verifyHashes());
 }
 
-TYPED_TEST(FilesystemDiffFixture, merkleNegotiationConverges) {
-  if constexpr (!std::is_same_v<TypeParam, MerkleTreeTagV1>)
-    return;
+TEST(MerkleTree, rootHashChangesOnDeleteDirectory) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  tree.addFile("foo/subdir/nested.txt", now(), defaultHash("nested"));
+  ASSERT_TRUE(tree.verifyHashes());
 
-  this->applyLeft(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt world Write
-        foo/subdir/nested.txt nested Write
-        foo/subdir/deep/file.txt deep Write
-        qux/same.txt same Write
-        onlyInLeft/file.txt onlyLeft Write
-    )");
+  auto hashBefore = tree.rootHash();
+  tree.deleteFile("foo/subdir", now());
 
-  this->applyRight(R"(
-        foo/bar.txt hello Write
-        foo/baz.txt changed Write
-        foo/subdir/nested.txt nested Write
-        foo/subdir/deep/file.txt deep Write
-        qux/same.txt same Write
-        onlyInRight/file.txt onlyRight Write
-    )");
+  ASSERT_NE(hashBefore, tree.rootHash());
 
-  auto leftTree = std::unique_ptr<MerkleTree>(
-      static_cast<MerkleTree *>(this->makeLeftTree().release()));
-  auto rightTree = std::unique_ptr<MerkleTree>(
-      static_cast<MerkleTree *>(this->makeRightTree().release()));
-
-  ASSERT_TRUE(leftTree->verifyHashes());
-  ASSERT_TRUE(rightTree->verifyHashes());
-
-  auto result = MerkleTree::merkleNegotiateDiffs(*leftTree, *rightTree);
-
-  ASSERT_EQ(result.modified.size(), 1);
-  ASSERT_EQ(result.modified[0], "foo/baz.txt");
-  ASSERT_EQ(result.onlyInLeft.size(), 1);
-  ASSERT_EQ(result.onlyInLeft[0], "onlyInLeft/file.txt");
-  ASSERT_EQ(result.onlyInRight.size(), 1);
-  ASSERT_EQ(result.onlyInRight[0], "onlyInRight/file.txt");
-}
-
-// ─── MerkleTreeFixture ───────────────────────────────────────────────────────
-
-class MerkleTreeFixture : public ::testing::Test {
-protected:
-  void SetUp() override {
-    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    storage = std::make_shared<LocalFileStorage>();
-    storage->setRoot(QCoreApplication::applicationDirPath() + "/test_merkle/" +
-                     runId);
-  }
-
-  void TearDown() override {
-    if (!HasFailure()) {
-      storage->cleanup(user);
-    }
-  }
-
-  std::unique_ptr<MerkleTree> makeTree() {
-    auto tree =
-        std::make_unique<MerkleTree>(storage->rootPath(user).toStdString());
-    tree->buildFromStorage(storage.get(), user);
-    return tree;
-  }
-
-  std::shared_ptr<LocalFileStorage> storage;
-  QString user = "testuser";
-};
-
-TEST_F(MerkleTreeFixture, rootHashChangesOnAddFile) {
-  storage->writeFile(user, "foo/bar.txt", "hello");
-  auto tree = makeTree();
-  ASSERT_TRUE(tree->verifyHashes());
-
-  auto hashBefore = tree->rootHash();
-  storage->writeFile(user, "foo/new.txt", "new content");
-  tree->addFile("foo/new.txt");
-
-  ASSERT_NE(hashBefore, tree->rootHash());
-  ASSERT_TRUE(tree->verifyHashes());
-}
-
-TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteFile) {
-  storage->writeFile(user, "foo/bar.txt", "hello");
-  storage->writeFile(user, "foo/baz.txt", "world");
-  auto tree = makeTree();
-  ASSERT_TRUE(tree->verifyHashes());
-
-  auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/baz.txt");
-
-  ASSERT_NE(hashBefore, tree->rootHash());
-  auto found = tree->find("foo/baz.txt");
-  ASSERT_TRUE(found.has_value());
-  auto &[node, isTombstoned] = *found;
-  ASSERT_TRUE(isTombstoned);
-  ASSERT_TRUE(tree->verifyHashes());
-}
-
-TEST_F(MerkleTreeFixture, rootHashChangesOnDeleteDirectory) {
-  storage->writeFile(user, "foo/bar.txt", "hello");
-  storage->writeFile(user, "foo/subdir/nested.txt", "nested");
-  auto tree = makeTree();
-  ASSERT_TRUE(tree->verifyHashes());
-
-  auto hashBefore = tree->rootHash();
-  tree->deleteFile("foo/subdir");
-
-  ASSERT_NE(hashBefore, tree->rootHash());
-  auto foundDir = tree->find("foo/subdir");
+  auto foundDir = tree.find("foo/subdir");
   ASSERT_TRUE(foundDir.has_value());
   auto &[dirNode, isDirTombstoned] = *foundDir;
   ASSERT_TRUE(isDirTombstoned);
 
-  auto foundFile = tree->find("foo/subdir/nested.txt");
+  auto foundFile = tree.find("foo/subdir/nested.txt");
   ASSERT_TRUE(foundFile.has_value());
   auto &[fileNode, isFileTombstoned] = *foundFile;
   ASSERT_TRUE(isFileTombstoned);
-  ASSERT_TRUE(tree->verifyHashes());
+  ASSERT_TRUE(tree.verifyHashes());
 }
 
-TEST_F(MerkleTreeFixture, getHashesAtDepthReturnsCorrectHashes) {
-  storage->writeFile(user, "foo/bar.txt", "hello");
-  storage->writeFile(user, "foo/baz.txt", "world");
-  storage->writeFile(user, "foo/subdir/nested.txt", "nested");
-  storage->writeFile(user, "qux.txt", "qux");
+TEST(MerkleTree, getHashesAtDepthReturnsCorrectHashes) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  tree.addFile("foo/baz.txt", now(), defaultHash("world"));
+  tree.addFile("foo/subdir/nested.txt", now(), defaultHash("nested"));
+  tree.addFile("qux.txt", now(), defaultHash("qux"));
 
-  auto tree = makeTree();
+  ASSERT_EQ(tree.getHashesAtDepth(0).size(), 1);
+  ASSERT_EQ(tree.getHashesAtDepth(1).size(), 2);
+  ASSERT_EQ(tree.getHashesAtDepth(2).size(), 3);
 
-  // depth 0 — root hash only
-  auto depth0 = tree->getHashesAtDepth(0);
-  ASSERT_EQ(depth0.size(), 1);
-
-  // depth 1 — root's children (foo dir, qux.txt file)
-  auto depth1 = tree->getHashesAtDepth(1);
-  ASSERT_EQ(depth1.size(), 2);
-
-  // depth 2 — foo's children (bar.txt, baz.txt, subdir dir)
-  auto depth2 = tree->getHashesAtDepth(2);
-  ASSERT_EQ(depth2.size(), 3);
-
-  // depth 3 — subdir's children (nested.txt)
-  auto depth3 = tree->getHashesAtDepth(3);
+  auto depth3 = tree.getHashesAtDepth(3);
   ASSERT_EQ(depth3.size(), 1);
   ASSERT_EQ(depth3[0].first, "foo/subdir/nested.txt");
 }
 
-TEST_F(MerkleTreeFixture, getChildHashesReturnsCorrectChildren) {
-  storage->writeFile(user, "foo/bar.txt", "hello");
-  storage->writeFile(user, "foo/baz.txt", "world");
-  storage->writeFile(user, "foo/subdir/nested.txt", "nested");
-  storage->writeFile(user, "root.txt", "file node");
+TEST(MerkleTree, getChildHashesReturnsCorrectChildren) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
+  tree.addFile("foo/baz.txt", now(), defaultHash("world"));
+  tree.addFile("foo/subdir/nested.txt", now(), defaultHash("nested"));
+  tree.addFile("root.txt", now(), defaultHash("file node"));
 
-  auto tree = makeTree();
-
-  auto fooChildren = tree->getChildHashes("foo");
+  auto fooChildren = tree.getChildHashes("foo");
   ASSERT_EQ(fooChildren.size(), 3);
 
   QSet<QString> paths;
@@ -424,68 +131,26 @@ TEST_F(MerkleTreeFixture, getChildHashesReturnsCorrectChildren) {
   ASSERT_TRUE(paths.contains("foo/baz.txt"));
   ASSERT_TRUE(paths.contains("foo/subdir"));
 
-  auto subdirChildren = tree->getChildHashes("foo/subdir");
+  auto subdirChildren = tree.getChildHashes("foo/subdir");
   ASSERT_EQ(subdirChildren.size(), 1);
   ASSERT_EQ(subdirChildren[0].first, "foo/subdir/nested.txt");
 }
 
-// ─── MerkleHasherFixture ─────────────────────────────────────────────────────
+TEST(MerkleTree, addFileResurrectsTombstonedNode) {
+  MerkleTree tree("foo");
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello"));
 
-struct LocalHasherTag {
-  static std::shared_ptr<FileStorage> makeStorage(const QString &rootPath) {
-    auto s = std::make_shared<LocalFileStorage>();
-    s->setRoot(rootPath);
-    return s;
-  }
-  static FileHasher create(std::shared_ptr<FileStorage> storage,
-                           const QString &user) {
-    return FileHasher(storage.get(), user);
-  }
-};
-
-template <typename HasherTag>
-class MerkleHasherFixture : public ::testing::Test {
-protected:
-  void SetUp() override {
-    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    storageImpl =
-        HasherTag::makeStorage(QCoreApplication::applicationDirPath() +
-                               "/test_merkle_hasher/" + runId);
-    hasher = HasherTag::create(storageImpl, user);
+  tree.deleteFile("foo/bar.txt", now());
+  {
+    auto found = tree.find("foo/bar.txt");
+    ASSERT_TRUE(found.has_value());
+    auto &[node, isTombstoned] = *found;
+    ASSERT_TRUE(isTombstoned);
   }
 
-  void TearDown() override {
-    if (!HasFailure()) {
-      storageImpl->cleanup(user);
-    }
-  }
-
-  std::shared_ptr<FileStorage> storageImpl;
-  FileHasher hasher;
-  QString user = "testuser";
-};
-
-using HasherImplementations = ::testing::Types<LocalHasherTag>;
-TYPED_TEST_SUITE(MerkleHasherFixture, HasherImplementations);
-
-TYPED_TEST(MerkleHasherFixture, hasherWorksCorrectly) {
-  this->storageImpl->writeFile(this->user, "foo/bar.txt", "hello");
-  this->storageImpl->writeFile(this->user, "foo/baz.txt", "world");
-
-  auto localStorage =
-      std::dynamic_pointer_cast<LocalFileStorage>(this->storageImpl);
-  QString treePath = localStorage->rootPath(this->user);
-
-  MerkleTree tree(treePath.toStdString());
-  tree.setHasher(this->hasher);
-  tree.buildFromStorage(this->storageImpl.get(), this->user);
-
-  ASSERT_TRUE(tree.verifyHashes());
-  ASSERT_EQ(tree.fileCount(), 2);
-
-  auto hashBefore = tree.rootHash();
-  this->storageImpl->writeFile(this->user, "foo/new.txt", "newcontent");
-  tree.addFile("foo/new.txt");
-  ASSERT_NE(hashBefore, tree.rootHash());
-  ASSERT_TRUE(tree.verifyHashes());
+  tree.addFile("foo/bar.txt", now(), defaultHash("hello again"));
+  auto found = tree.find("foo/bar.txt");
+  ASSERT_TRUE(found.has_value());
+  auto &[node, isTombstoned] = *found;
+  ASSERT_FALSE(isTombstoned);
 }

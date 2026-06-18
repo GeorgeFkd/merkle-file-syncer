@@ -1,8 +1,6 @@
 #include "FileClient.h"
-#include "FileHasher.h"
 #include "FileServer.h"
 #include "FileTree.h"
-#include "FileTreeFactory.h"
 #include "LocalFileStorage.h"
 #include "S3FileStorage.h"
 #include <QCoreApplication>

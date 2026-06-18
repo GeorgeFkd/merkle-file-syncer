@@ -4,7 +4,6 @@
 #include <QFile>
 #include <QFileInfo>
 
-MerkleTree::MerkleTree() {}
 
 // (lhs - rhs) ∪ (rhs - lhs) ∪ {x ∈ lhs ∩ rhs | hash_a(x) ≠ hash_b(x)}
 TreeDiff
@@ -48,92 +47,14 @@ MerkleTree::symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
 
   return result;
 }
-TreeDiff MerkleTree::merkleNegotiateDiffs(const MerkleTree &lhs,
-                                          const MerkleTree &rhs) {
-  auto leftHashes = lhs.getHashesAtDepth(0);
-  auto rightHashes = rhs.getHashesAtDepth(0);
-  auto diff = symmetricHashDiff(leftHashes, rightHashes);
 
-  TreeDiff result;
-  QList<QString> toDescend;
-
-  auto processDiff = [&](const TreeDiff &diff) {
-    for (const auto &path : diff.onlyInLeft) {
-      auto found = lhs.find(path.toStdString());
-      if (found.has_value()) {
-        auto &[leftNode, isTombstoned] = *found;
-        if (leftNode->type == FileType::File) {
-          result.onlyInLeft.append(path);
-        } else {
-          toDescend.append(path);
-        }
-      }
-    }
-    for (const auto &path : diff.onlyInRight) {
-      auto found = rhs.find(path.toStdString());
-      if (found.has_value()) {
-        auto &[rightNode, isTombstoned] = *found;
-        if (rightNode->type == FileType::File) {
-          result.onlyInRight.append(path);
-        } else {
-          toDescend.append(path);
-        }
-      }
-    }
-    for (const auto &path : diff.modified) {
-      auto found = lhs.find(path.toStdString());
-      if (found.has_value()) {
-        auto &[leftNode, isTombstoned] = *found;
-        if (leftNode->type == FileType::File) {
-          result.modified.append(path);
-        } else {
-          toDescend.append(path);
-        }
-      }
-    }
-  };
-
-  while (!diff.onlyInLeft.isEmpty() || !diff.onlyInRight.isEmpty() ||
-         !diff.modified.isEmpty()) {
-    toDescend.clear();
-    processDiff(diff);
-
-    if (toDescend.isEmpty())
-      break;
-
-    leftHashes.clear();
-    rightHashes.clear();
-    for (const auto &path : toDescend) {
-      leftHashes.append(lhs.getChildHashes(path));
-      rightHashes.append(rhs.getChildHashes(path));
-    }
-
-    diff = symmetricHashDiff(leftHashes, rightHashes);
-  }
-
-  return result;
-}
-
-MerkleTree::MerkleTree(const std::string &rootDir, const QString &username) {
+MerkleTree::MerkleTree(const QString &rootNodeName) {
   root = std::make_unique<FileNode>();
   root->type = FileType::Directory;
-  root->path = username;
+  root->path = rootNodeName;
   root->parent = nullptr;
   root->hash = hashChildren(root.get());
-  //no need to call afterBuild()
-}
-
-MerkleTree::MerkleTree(const std::string &rootDir) {
-  rootPath = QString::fromStdString(rootDir);
-}
-
-void MerkleTree::afterBuild() {
-  if (root) {
-    computeHashes(root.get());
-    assert(verifyHashes());
-  } else {
-    qWarning() << "No root found in afterBuild()";
-  }
+  // no need to call afterBuild()
 }
 
 QList<QPair<QString, QByteArray>>
@@ -241,8 +162,8 @@ bool MerkleTree::deleteFile(const std::string &relativePath,
 
   auto node = (*it).get();
   markTombstoneRecursively(node, deletedAt);
-  computeHashes(current);
-  propagateHash(current);
+  propagateHashDownward(current);
+  propagateHashUpward(current);
   return true;
 }
 
@@ -259,21 +180,6 @@ void MerkleTree::debugNode(const FileNode *node, int depth) const {
   qDebug() << indent + "[" + type + "] " + node->path + " hash: " + hashStr;
   for (const auto &child : node->children)
     debugNode(child.get(), depth + 1);
-}
-
-QByteArray MerkleTree::hashFile(const QString &relativePath) const {
-  if (hasher) {
-    return hasher(relativePath);
-  }
-  QFile f(rootPath + "/" + relativePath);
-  if (!f.open(QIODevice::ReadOnly)) {
-    qDebug() << "Failed to open file for hashing:" << relativePath
-             << f.errorString();
-    return {};
-  }
-  auto contents = f.readAll();
-  f.close();
-  return QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
 }
 
 bool MerkleTree::addFile(const std::string &relativePath,
@@ -309,7 +215,7 @@ bool MerkleTree::addFile(const std::string &relativePath,
       current = current->children.back().get();
       if (current->type == FileType::File) {
         qDebug() << "Propagating hash of: " << current->path << ".";
-        propagateHash(current);
+        propagateHashUpward(current);
         return true;
       }
     } else {
@@ -317,6 +223,7 @@ bool MerkleTree::addFile(const std::string &relativePath,
       if (i == parts.size() - 1) {
         current->mtime = mtime;
         if (current->isDeleted) {
+          // resurrect from tombstone
           current->isDeleted = false;
           current->deletedAt = QDateTime();
           current->type = FileType::File;
@@ -325,134 +232,39 @@ bool MerkleTree::addFile(const std::string &relativePath,
         if (current->type == FileType::File) {
           current->hash = hash;
           qDebug() << "Propagating hash of: " << current->path << " (updated).";
-          propagateHash(current);
+          propagateHashUpward(current);
           return true;
         }
       }
     }
   }
   return true;
-}
-
-bool MerkleTree::addFile(const std::string &relativePath,
-                         const QDateTime &mtime) {
-  Q_ASSERT_X(root != nullptr, "MerkleTree::addFile",
-             "root is null — tree not built");
-  Q_ASSERT_X(!relativePath.empty(), "MerkleTree::addFile",
-             "relativePath is empty");
-
-  auto parts =
-      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
-  FileNode *current = root.get();
-  for (int i = 0; i < parts.size(); i++) {
-    const auto &part = parts[i];
-    FileNode *found = nullptr;
-    for (const auto &child : current->children) {
-      if (child->path == part) {
-        found = child.get();
-        break;
-      }
-    }
-    if (!found) {
-      auto newNode = std::make_unique<FileNode>();
-      newNode->path = part;
-      newNode->parent = current;
-      newNode->mtime = mtime;
-      newNode->type =
-          (i == parts.size() - 1) ? FileType::File : FileType::Directory;
-      if (newNode->type == FileType::File) {
-        newNode->hash = hashFile(QString::fromStdString(relativePath));
-      }
-      current->children.push_back(std::move(newNode));
-      current = current->children.back().get();
-      if (current->type == FileType::File) {
-        qDebug() << "Propagating hash of: " << current->path << ".";
-        propagateHash(current);
-        return true;
-      }
-    } else {
-      current = found;
-      if (i == parts.size() - 1) {
-        current->mtime = mtime;
-        if (current->isDeleted) {
-          current->isDeleted = false;
-          current->deletedAt = QDateTime();
-          current->type = FileType::File;
-        }
-
-        if (current->type == FileType::File) {
-          current->hash = hashFile(QString::fromStdString(relativePath));
-          qDebug() << "Propagating hash of: " << current->path << " (updated).";
-          propagateHash(current);
-          return true;
-        }
-      }
-    }
-  }
-  return true;
-}
-
-TreeDiff MerkleTree::diff(const FileTree &other) const {
-  Q_ASSERT_X(root != nullptr, "MerkleTree::diff",
-             "tree doesnt have build() called.");
-  const auto *otherMerkle = dynamic_cast<const MerkleTree *>(&other);
-  Q_ASSERT_X(otherMerkle != nullptr, "MerkleTree::diff",
-             "cannot diff trees of different types, both must be MerkleTree.");
-  Q_ASSERT_X(otherMerkle->root != nullptr, "MerkleTree::diff",
-             "other tree doesnt have build() called.");
-  TreeDiff result;
-  diffNodes(root.get(), rootPath, otherMerkle->root.get(),
-            otherMerkle->rootPath, "", result);
-  return result;
 }
 
 FileNode *MerkleTree::getRoot() const { return root.get(); }
-QString MerkleTree::getRootPath() const { return rootPath; }
 QByteArray MerkleTree::rootHash() const { return root->hash; }
 
-void MerkleTree::setHasher(std::function<QByteArray(const QString &)> hasher) {
-  this->hasher = std::move(hasher);
+QByteArray MerkleTree::hashTombstoned(const FileNode *node) const {
+  assert(node->isDeleted);
+  QString path = getRelativePath(node);
+  return QCryptographicHash::hash(("tombstone:" + path).toUtf8(),
+                                  QCryptographicHash::Sha256);
 }
 
-QByteArray MerkleTree::readFileContents(const FileNode *node) const {
-  QString fullPath = rootPath + "/" + getRelativePath(node);
-  QFile file(fullPath);
-  if (!file.open(QIODevice::ReadOnly)) {
-    qDebug() << "Failed to open file for hashing:" << fullPath
-             << file.errorString();
-    return {};
+void MerkleTree::propagateHashDownward(FileNode *node) {
+  //if it is a file and not deleted the hash is already there from addFile
+  //this is only needed after marking tombstones downward as addFile only needs
+  //to propagate upward.
+  if (node->isDeleted) {
+    node->hash = hashTombstoned(node);
+  } else if (node->type == FileType::Directory) {
+    for (auto &child : node->children) {
+      propagateHashDownward(child.get());
+    }
+    node->hash = hashChildren(node);
   }
-  auto contents = file.readAll();
-  file.close();
-  return contents;
-}
 
-void MerkleTree::computeHashes(FileNode *node) {
-  // when the node is tombstoned the hash is computed the same regardless
-  // if directory or file, i wrote it like this for more explicitness
-  if (node->type == FileType::File) {
-    if (node->isDeleted) {
-      QString path = getRelativePath(node);
-      node->hash = QCryptographicHash::hash(("tombstone:" + path).toUtf8(),
-                                            QCryptographicHash::Sha256);
-    } else {
-      if (node->hash.isEmpty()) {
-        node->hash = hashFile(getRelativePath(node));
-      }
-    }
-  }
-  if (node->type == FileType::Directory) {
-    if (node->isDeleted) {
-      QString path = getRelativePath(node);
-      node->hash = QCryptographicHash::hash(("tombstone:" + path).toUtf8(),
-                                            QCryptographicHash::Sha256);
-    } else {
-      for (auto &child : node->children) {
-        computeHashes(child.get());
-      }
-      node->hash = hashChildren(node);
-    }
-  }
+  assert(!node->hash.isEmpty());
 }
 
 void MerkleTree::recomputeDirHash(FileNode *node) {
@@ -461,7 +273,7 @@ void MerkleTree::recomputeDirHash(FileNode *node) {
   node->hash = hashChildren(node);
 }
 
-void MerkleTree::propagateHash(FileNode *node) {
+void MerkleTree::propagateHashUpward(FileNode *node) {
   FileNode *current = node;
   while (current->parent != nullptr) {
     recomputeDirHash(current->parent);
@@ -469,91 +281,5 @@ void MerkleTree::propagateHash(FileNode *node) {
              << " hash: " << current->parent->hash.toHex() << ".";
 
     current = current->parent;
-  }
-}
-
-void MerkleTree::diffNodes(const FileNode *left, const QString &leftRootPath,
-                           const FileNode *right, const QString &rightRootPath,
-                           const QString &path, TreeDiff &result) const {
-  Q_ASSERT_X(!left->hash.isEmpty(), "MerkleTree::diffNodes",
-             "left node hash is empty, call build().");
-  Q_ASSERT_X(!right->hash.isEmpty(), "MerkleTree::diffNodes",
-             "right node hash is empty, call build().");
-  if (left->hash == right->hash)
-    return;
-
-  QHash<QString, const FileNode *> leftChildren;
-  for (const auto &child : left->children)
-    leftChildren[child->path] = child.get();
-
-  QHash<QString, const FileNode *> rightChildren;
-  for (const auto &child : right->children)
-    rightChildren[child->path] = child.get();
-
-  // in left not in right(deleted or key not even in)
-  for (auto it = leftChildren.begin(); it != leftChildren.end(); ++it) {
-    bool found = rightChildren.contains(it.key());
-    if (!found) {
-      QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
-      if (it.value()->type == FileType::File)
-        result.onlyInLeft.append(fullPath);
-      else
-        collectAllFiles(it.value(), fullPath, result.onlyInLeft);
-    } else {
-      auto foundRight = rightChildren[it.key()];
-      if (foundRight->isDeleted) {
-        QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
-        if (it.value()->type == FileType::File)
-          result.onlyInLeft.append(fullPath);
-        else
-          collectAllFiles(it.value(), fullPath, result.onlyInLeft);
-      }
-    }
-  }
-
-  // in right not in left(deleted or key not even in)
-  for (auto it = rightChildren.begin(); it != rightChildren.end(); ++it) {
-    bool found = leftChildren.contains(it.key());
-    if (!found) {
-      QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
-      if (it.value()->type == FileType::File)
-        result.onlyInRight.append(fullPath);
-      else
-        collectAllFiles(it.value(), fullPath, result.onlyInRight);
-    } else {
-      auto foundLeft = leftChildren[it.key()];
-      if (foundLeft->isDeleted) {
-        QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
-        if (it.value()->type == FileType::File)
-          result.onlyInRight.append(fullPath);
-        else
-          collectAllFiles(it.value(), fullPath, result.onlyInRight);
-      }
-    }
-  }
-
-  for (auto it = leftChildren.begin(); it != leftChildren.end(); ++it) {
-    auto found = rightChildren.contains(it.key());
-    if (found) {
-      QString fullPath = path.isEmpty() ? it.key() : path + "/" + it.key();
-      const FileNode *leftNode = it.value();
-      const FileNode *rightNode = rightChildren[it.key()];
-      if (rightNode->isDeleted || leftNode->isDeleted) {
-        continue;
-      }
-      auto bothFiles =
-          leftNode->type == FileType::File && rightNode->type == FileType::File;
-      if (bothFiles) {
-        auto hashesDiffer = leftNode->hash != rightNode->hash;
-        auto pathsAreSame = leftNode->path == rightNode->path;
-        if (hashesDiffer && pathsAreSame) {
-          qDebug() << "Detected file diff";
-          result.modified.append(fullPath);
-        }
-      } else {
-        diffNodes(leftNode, leftRootPath, rightNode, rightRootPath, fullPath,
-                  result);
-      }
-    }
   }
 }

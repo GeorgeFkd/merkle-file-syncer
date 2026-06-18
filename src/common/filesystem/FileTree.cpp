@@ -4,20 +4,6 @@
 #include <QFileInfo>
 #include <QString>
 
-void FileTree::buildFromStorage(const FileStorage *storage,
-                                const QString &user) {
-  root = std::make_unique<FileNode>();
-  root->type = FileType::Directory;
-  root->path = user;
-  root->parent = nullptr;
-
-  auto files = storage->listFiles(user);
-  for (const auto &file : files) {
-    addFile(file.toStdString());
-  }
-  afterBuild();
-}
-
 std::optional<std::tuple<FileNode *,bool>>
 FileTree::find(const std::string &relativePath) const {
   auto parts =

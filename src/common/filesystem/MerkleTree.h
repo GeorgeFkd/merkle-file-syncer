@@ -3,48 +3,31 @@
 
 class MerkleTree : public FileTree {
 public:
-  explicit MerkleTree(const std::string &rootDir);
-  explicit MerkleTree(const std::string& rootDir,const QString& username);
-  explicit MerkleTree();
+  explicit MerkleTree(const QString& rootNodeName);
   void debug() const override;
-  // bool addFile(const std::string &relativePath) override;
-  bool addFile(const std::string &relativePath,
-               const QDateTime &mtime = QDateTime::currentDateTime()) override;
   bool addFile(const std::string& relativePath,const QDateTime& mtime,const QByteArray& hash);
   bool deleteFile(
       const std::string &relativePath,
       const QDateTime &deletedAt = QDateTime::currentDateTime()) override;
-  TreeDiff diff(const FileTree &other) const override;
-  QString getRootPath() const override;
   FileNode *getRoot() const override;
   QByteArray rootHash() const;
   bool verifyHashes() const;
-  void setHasher(std::function<QByteArray(const QString &)> hasher);
   QList<QPair<QString, QByteArray>> getHashesAtDepth(int depth) const;
   QList<QPair<QString, QByteArray>> getChildHashes(const QString &path) const;
   static TreeDiff
   symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
                     const QList<QPair<QString, QByteArray>> &rhs);
-  static TreeDiff merkleNegotiateDiffs(const MerkleTree &lhs,
-                                       const MerkleTree &rhs);
 
 private:
-  QByteArray hashFile(const QString &relativePath) const;
   QByteArray hashChildren(const FileNode *node) const;
-  QByteArray readFileContents(const FileNode *node) const;
-  void computeHashes(FileNode *node);
-  void propagateHash(FileNode *node);
+  QByteArray hashTombstoned(const FileNode* node) const;
+  void propagateHashDownward(FileNode *node);
+  void propagateHashUpward(FileNode *node);
   void recomputeDirHash(FileNode *node);
-  void diffNodes(const FileNode *left, const QString &leftRootPath,
-                 const FileNode *right, const QString &rightRootPath,
-                 const QString &path, TreeDiff &result) const;
   void debugNode(const FileNode *node, int depth) const;
   bool verifyNode(const FileNode *node) const;
   void collectHashesAtDepth(const FileNode *node, const QString &path,
                             int targetDepth, int currentDepth,
                             QList<QPair<QString, QByteArray>> &result) const;
 
-  QString rootPath;
-  std::function<QByteArray(const QString &)> hasher;
-  void afterBuild() override;
 };

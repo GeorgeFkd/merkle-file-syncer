@@ -20,8 +20,7 @@ NegotiationState *FileClient::getNegotiationState() {
 
 void FileClient::buildMerkleTree(const std::string &rootDir,
                                  const QString &username) {
-  merkleTree = std::make_unique<MerkleTree>(
-      fileStorage->rootPath(username).toStdString(), username);
+  merkleTree = std::make_unique<MerkleTree>(username);
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
     auto contents = fileStorage->readFile(username, path);

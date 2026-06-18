@@ -215,7 +215,7 @@ QByteArray FileServer::hashContents(const QByteArray &contents) {
 
 std::unique_ptr<MerkleTree>
 FileServer::buildMerkleTree(const QString &username) {
-  auto tree = std::make_unique<MerkleTree>("", username);
+  auto tree = std::make_unique<MerkleTree>(username);
 
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {

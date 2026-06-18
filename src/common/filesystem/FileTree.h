@@ -1,5 +1,4 @@
 #pragma once
-#include "FileStorage.h"
 #include <QByteArray>
 #include <QDateTime>
 #include <QList>
@@ -34,19 +33,11 @@ class FileTree {
 public:
   virtual ~FileTree() = default;
   virtual bool
-  addFile(const std::string &relativePath,
-          const QDateTime &mtime = QDateTime::currentDateTime()) = 0;
-  virtual bool
   deleteFile(const std::string &relativePath,
              const QDateTime &deletedAt = QDateTime::currentDateTime()) = 0;
   int fileCount() const;
-  //TODO: remove things related to this diff(tests etc. etc.)
-  virtual TreeDiff diff(const FileTree &other) const = 0;
   virtual void debug() const = 0;
-  virtual QString getRootPath() const = 0;
   virtual FileNode *getRoot() const = 0;
-  //TODO: remove this, trees should not depend on storage
-  void buildFromStorage(const FileStorage *storage, const QString &username);
   std::optional<std::tuple<FileNode *, bool>>
   find(const std::string &relativePath) const;
 
@@ -59,7 +50,6 @@ protected:
                        QList<QString> &files) const;
   QString getRelativePath(const FileNode *node) const;
   std::unique_ptr<FileNode> root;
-  virtual void afterBuild() {};
 };
 
 enum class TreeType { Vanilla, Merkle };
