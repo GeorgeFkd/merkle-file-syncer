@@ -113,7 +113,7 @@ private:
   QByteArray hashContents(const QByteArray& contents);
   void buildMerkleTree(const std::string& rootDir,const QString& username);
   QList<QString> discoverNewFiles();
-  QList<QString> discoverDeletedFiles();
+  QSet<QString> discoverDeletedFiles();
 
   // --- Outbound command staging ---
   QHash<QString, SyncRequestMessage> commandsToSend;
@@ -128,7 +128,7 @@ private:
   void stageConflictResolution(const QString &path);
   void stageDirectoryUpload(const QString &dirPath);
   void stageNewFilesForSending(const QList<QString> &files);
-  void stageDeletedFilesForSending(const QList<QString> &files);
+  void stageDeletedFilesForSending(const QSet<QString> &files);
   void resolveServerHasFileClientDoesnt(const QString &path);
 
   // --- Server file listing (naive pull + merkle apply expansion) ---

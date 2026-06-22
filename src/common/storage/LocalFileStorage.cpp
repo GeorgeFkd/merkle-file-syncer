@@ -87,7 +87,7 @@ LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
   QString path = fullPath(user, filename);
   QFileInfo info(path);
   if (!info.exists())
-    return std::nullopt;
+    return {};
   return info.lastModified();
 }
 

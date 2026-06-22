@@ -226,7 +226,7 @@ FileServer::buildMerkleTree(const QString &username) {
     }
     auto mtime = database.readMtime(username, path);
     if (!mtime.has_value()) {
-      qDebug() << "getUserTree: no mtime for path" << path;
+      qDebug() << "buildMerkleTree: no mtime for path" << path;
       continue;
     }
 
@@ -345,9 +345,11 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
          "Token should always be set so we can fetch username on server");
   ListResponseMessage response;
 
+  bool clientWantsDirectory = !msg->directory.isEmpty();
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
-    if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/")) {
+    bool pathIsDir = path.startsWith(msg->directory + "/");
+    if (clientWantsDirectory && !pathIsDir) {
       continue;
     }
     auto mtime = database.readMtime(username, path);
@@ -358,7 +360,8 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
   auto tombstones = database.allTombstones(username);
   for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
     const QString &path = it.key();
-    if (!msg->directory.isEmpty() && !path.startsWith(msg->directory + "/")) {
+    bool pathIsDir = path.startsWith(msg->directory + "/");
+    if (clientWantsDirectory && !pathIsDir) {
       continue;
     }
     response.entries.append({path, it.value(), true});
@@ -379,18 +382,12 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   auto path = QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(username, path);
 
-  SyncRequestMessage response;
-  response.path = msg->path;
-  response.contents = {};
-  response.operationType = msg->operationType;
-
   if (msg->operationType == FileOperationType::Delete) {
     return handleDeleteRequest(msg, path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
     return handleWriteRequest(msg, path, storedMtime);
   }
-
-  return response;
+  assert(false);
 }
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }

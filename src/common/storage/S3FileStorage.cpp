@@ -104,7 +104,7 @@ QList<QString> S3FileStorage::listFiles(const QString &user) const {
     auto isDirectory = relativePath.endsWith("/") || relativePath.isEmpty();
     if (isDirectory)
       continue;
-    files.append(key.mid(user.length() + 1));
+    files.append(relativePath);
   }
   return files;
 }
