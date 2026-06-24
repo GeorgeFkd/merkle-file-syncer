@@ -150,6 +150,8 @@ private:
   void handleWriteResponse(SyncRequestMessage *msg);
   void handleDeleteResponse(SyncRequestMessage *msg);
   void applyServerVersion(const QString &path, const QByteArray &contents);
+  void handleChunkDownload(ChunkTransferMessage *msg);
+  void handleChunkAck(AckChunkMessage *msg);
 
   // --- Misc ---
   void handleUnrecognized(Message *msg);

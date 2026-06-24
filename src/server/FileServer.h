@@ -67,18 +67,19 @@ private:
   // --- Sync request handling ---
   SyncRequestMessage handleSyncRequest(SyncRequestMessage *msg);
   SyncRequestMessage
-  handleWriteRequest(SyncRequestMessage *msg,
-                     const QString &path,
+  handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                      const std::optional<QDateTime> &storedMtime);
   SyncRequestMessage
-  handleDeleteRequest(SyncRequestMessage *msg,
-                      const QString &path,
+  handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
                       const std::optional<QDateTime> &storedMtime);
   SyncRequestMessage trySendNewerFile(const QString &username,
                                       const QString &path,
                                       const QDateTime &serverMtime,
                                       FileOperationType op);
 
+  // --- Chunking ---
+  AckChunkMessage handleChunkUpload(ChunkTransferMessage *msg);
+  void handleAckChunk(AckChunkMessage *msg);
   // --- Listing ---
   ListResponseMessage handleListRequest(ListRequestMessage *msg);
 

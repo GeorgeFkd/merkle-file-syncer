@@ -17,7 +17,9 @@ enum class MessageType {
   SyncRequest,
   MerkleSync,
   ListRequest,
-  ListResponse
+  ListResponse,
+  ChunkTransfer,
+  AckChunk
 };
 
 class Message {
@@ -119,5 +121,29 @@ public:
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<ListResponseMessage> deserialize(const QJsonObject &obj);
+};
+
+class ChunkTransferMessage : public Message {
+public:
+  QString path;
+  qint32 partNumber;
+  qint64 chunkSize;
+  QByteArray contents;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<ChunkTransferMessage> deserialize(const QJsonObject &obj);
+};
+
+enum class ChunkTransferError {FileNotFound};
+
+class AckChunkMessage : public Message {
+public:
+  QString path;
+  qint32 partNumber;
+  QString failureMsg;
+  ChunkTransferError failureType;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<AckChunkMessage> deserialize(const QJsonObject &obj);
 };
 

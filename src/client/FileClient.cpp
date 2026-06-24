@@ -21,6 +21,7 @@ NegotiationState *FileClient::getNegotiationState() {
 void FileClient::buildMerkleTree(const std::string &rootDir,
                                  const QString &username) {
   merkleTree = std::make_unique<MerkleTree>(username);
+  // TODO: build from DB and not storage
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
     auto contents = fileStorage->readFile(username, path);
@@ -138,6 +139,14 @@ void FileClient::dispatch(Message *msg) {
     handleListResponse(static_cast<ListResponseMessage *>(msg));
     break;
   }
+  case MessageType::ChunkTransfer: {
+    handleChunkDownload(static_cast<ChunkTransferMessage *>(msg));
+    break;
+  }
+  case MessageType::AckChunk: {
+    handleChunkAck(static_cast<AckChunkMessage *>(msg));
+    break;
+  }
   default: {
     handleUnrecognized(msg);
     break;
@@ -249,6 +258,14 @@ void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
     handleDeleteResponse(msg);
   }
   checkSyncCompletionAndUnlock();
+}
+
+void handleChunkAck(AckChunkMessage *msg) {
+  qDebug() << "received ack chunk message on client";
+}
+
+void handleChunkDownload(ChunkTransferMessage *msg) {
+  qDebug() << "received chunk transfer message on client";
 }
 
 void FileClient::checkSyncCompletionAndUnlock() {

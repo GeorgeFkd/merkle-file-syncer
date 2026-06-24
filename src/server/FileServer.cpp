@@ -1,5 +1,4 @@
 #include "FileServer.h"
-#include "FileHasher.h"
 #include "LocalServerTransport.h"
 #include "Messages.h"
 #include "TcpServerTransport.h"
@@ -87,6 +86,15 @@ void FileServer::dispatch(QIODevice *socket, Message *msg) {
   case MessageType::ListRequest: {
     auto resp = handleListRequest(static_cast<ListRequestMessage *>(msg));
     transport->send(socket, resp);
+    break;
+  }
+  case MessageType::ChunkTransfer: {
+    auto resp = handleChunkUpload(static_cast<ChunkTransferMessage *>(msg));
+    transport->send(socket,resp);
+    break;
+  }
+  case MessageType::AckChunk: {
+    handleAckChunk(static_cast<AckChunkMessage *>(msg));
     break;
   }
   default: {
@@ -187,8 +195,9 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
          "Token should always be set so we can fetch username on server");
 
   QDateTime clientMtime = msg->operationTime;
-
-  if (storedMtime.has_value() && storedMtime.value() > clientMtime) {
+  auto serverTimeIsLatest =
+      storedMtime.has_value() && (storedMtime.value() > clientMtime);
+  if (serverTimeIsLatest) {
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
     return trySendNewerFile(username, QString::fromStdString(msg->path),
                             storedMtime.value(), FileOperationType::Write);
@@ -217,6 +226,7 @@ std::unique_ptr<MerkleTree>
 FileServer::buildMerkleTree(const QString &username) {
   auto tree = std::make_unique<MerkleTree>(username);
 
+  // TODO: build from db and not storage
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
     auto contents = fileStorage->readFile(username, path);
@@ -269,6 +279,8 @@ MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
 
   MerkleSyncMessage response;
 
+  // TODO: merge these two branches, getHashesAtDepth(1) and
+  // getChildHashes(path) might need to be merged somehow
   if (msg->phase == 0) {
     if (serverTree->rootHash() == msg->rootHash) {
       qDebug() << "handleMerkleSyncRequest: roots match, negotiation complete";
@@ -345,11 +357,11 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
          "Token should always be set so we can fetch username on server");
   ListResponseMessage response;
 
-  bool clientWantsDirectory = !msg->directory.isEmpty();
+  bool clientWantsEverything = msg->directory.isEmpty();
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
-    bool pathIsDir = path.startsWith(msg->directory + "/");
-    if (clientWantsDirectory && !pathIsDir) {
+    bool pathIsInRequestedDir = path.startsWith(msg->directory + "/");
+    if (!clientWantsEverything && !pathIsInRequestedDir) {
       continue;
     }
     auto mtime = database.readMtime(username, path);
@@ -360,8 +372,8 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
   auto tombstones = database.allTombstones(username);
   for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
     const QString &path = it.key();
-    bool pathIsDir = path.startsWith(msg->directory + "/");
-    if (clientWantsDirectory && !pathIsDir) {
+    bool pathIsInRequestedDir = path.startsWith(msg->directory + "/");
+    if (!clientWantsEverything && !pathIsInRequestedDir) {
       continue;
     }
     response.entries.append({path, it.value(), true});
@@ -388,6 +400,17 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
     return handleWriteRequest(msg, path, storedMtime);
   }
   assert(false);
+}
+
+
+void FileServer::handleAckChunk(AckChunkMessage* msg) {
+  qDebug() << "received ack chunk message on server";
+}
+
+AckChunkMessage FileServer::handleChunkUpload(ChunkTransferMessage *msg) {
+  AckChunkMessage response;
+  qDebug() << "received chunk transfer message on server";
+  return response;
 }
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }

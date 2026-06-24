@@ -77,14 +77,14 @@ MerkleSyncMessage::deserialize(const QJsonObject &obj) {
       MerkleEntry entry;
       entry.path = entryObj["path"].toString();
       entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
-      entry.mtime =
-          QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODateWithMs);
+      entry.mtime = QDateTime::fromString(entryObj["mtime"].toString(),
+                                          Qt::ISODateWithMs);
       entry.filetype = entryObj["type"].toString() == "directory"
                            ? FileType::Directory
                            : FileType::File;
       entry.isTombstone = entryObj["isTombstone"].toBool(false);
-      entry.deletedAt = QDateTime::fromString(
-          entryObj["deletedAt"].toString(), Qt::ISODateWithMs);
+      entry.deletedAt = QDateTime::fromString(entryObj["deletedAt"].toString(),
+                                              Qt::ISODateWithMs);
       entries.append(entry);
     }
     msg->fileEntriesPerChild.append({childPath, entries});
@@ -133,6 +133,8 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return ListRequestMessage::deserialize(obj);
   if (type == "list_response")
     return ListResponseMessage::deserialize(obj);
+  if (type == "chunk_transfer")
+    return ChunkTransferMessage::deserialize(obj);
 
   return nullptr;
 }
@@ -201,7 +203,8 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString().toStdString();
   msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
-  msg->operationTime = QDateTime::fromString(obj["mtime"].toString(),Qt::ISODateWithMs);
+  msg->operationTime =
+      QDateTime::fromString(obj["mtime"].toString(), Qt::ISODateWithMs);
 
   if (obj["optype"].toString() == "write")
     msg->operationType = FileOperationType::Write;
@@ -274,6 +277,63 @@ ListResponseMessage::deserialize(const QJsonObject &obj) {
     msg->entries.append(entry);
   }
   return msg;
+}
+
+MessageType ChunkTransferMessage::type() const {
+  return MessageType::ChunkTransfer;
+}
+
+std::unique_ptr<ChunkTransferMessage>
+ChunkTransferMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<ChunkTransferMessage>();
+  msg->partNumber = obj["partNumber"].toInt();
+  msg->path = obj["path"].toString();
+  msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
+  msg->token = obj["token"].toString();
+  return msg;
+}
+
+QByteArray ChunkTransferMessage::serialize() const {
+  QJsonObject obj;
+  obj["type"] = "chunk_transfer";
+  obj["contents"] = QString::fromUtf8(this->contents.toBase64());
+  obj["token"] = this->token;
+  obj["path"] = this->path;
+  obj["partNumber"] = this->partNumber;
+  obj["chunkSize"] = this->chunkSize;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+
+MessageType AckChunkMessage::type() const { return MessageType::AckChunk; }
+std::unique_ptr<AckChunkMessage>
+AckChunkMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<AckChunkMessage>();
+  msg->path = obj["path"].toString();
+  msg->partNumber = obj["partNumber"].toInt();
+  msg->failureMsg = obj["failureMsg"].toString();
+  msg->token = obj["token"].toString();
+  auto failureType = obj["failureType"].toString();
+  if (failureType == "file_not_found")
+    msg->failureType = ChunkTransferError::FileNotFound;
+  else
+    Q_ASSERT_X(false, "AckChunkMessage::deserialize",
+               "failureType was not properly set");
+  return msg;
+}
+
+QByteArray AckChunkMessage::serialize() const {
+  QJsonObject obj;
+  switch (this->failureType) {
+  case ChunkTransferError::FileNotFound: {
+    obj["failureType"] = "file_not_found";
+    break;
+  }
+  }
+
+  obj["partNumber"] = this->partNumber;
+  obj["failureMsg"] = this->failureMsg;
+  obj["token"] = this->token;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
 QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {

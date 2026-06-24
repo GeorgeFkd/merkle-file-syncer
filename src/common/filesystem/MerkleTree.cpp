@@ -54,7 +54,6 @@ MerkleTree::MerkleTree(const QString &rootNodeName) {
   root->path = rootNodeName;
   root->parent = nullptr;
   root->hash = hashChildren(root.get());
-  // no need to call afterBuild()
 }
 
 QList<QPair<QString, QByteArray>>
