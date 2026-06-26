@@ -260,11 +260,11 @@ void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
   checkSyncCompletionAndUnlock();
 }
 
-void handleChunkAck(AckChunkMessage *msg) {
+void FileClient::handleChunkAck(AckChunkMessage *msg) {
   qDebug() << "received ack chunk message on client";
 }
 
-void handleChunkDownload(ChunkTransferMessage *msg) {
+void FileClient::handleChunkDownload(ChunkTransferMessage *msg) {
   qDebug() << "received chunk transfer message on client";
 }
 
