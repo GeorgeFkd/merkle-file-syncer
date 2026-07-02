@@ -1,7 +1,6 @@
 #pragma once
 #include "ClientTransport.h"
 #include "FileDb.h"
-#include "FileHasher.h"
 #include "LocalFileStorage.h"
 #include "MerkleTree.h"
 #include "Messages.h"

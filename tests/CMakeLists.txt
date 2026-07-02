@@ -5,7 +5,7 @@ include(GoogleTest)
 
 set(TEST_COMMON_INCLUDES
     ${CMAKE_SOURCE_DIR}/src/client ${CMAKE_SOURCE_DIR}/src/server
-    ${CMAKE_SOURCE_DIR}/src/common
+    # ${CMAKE_SOURCE_DIR}/src/common
     ${CMAKE_SOURCE_DIR}/rapidcheck/extras/gtest/include)
 
 add_executable(tree_tests main.cpp tree_tests.cpp)
@@ -14,7 +14,6 @@ target_link_libraries(
   PRIVATE GTest::gtest
           rapidcheck
           filesutil
-          filehasher
           storage
           messages
           Qt6::Core)
@@ -30,7 +29,6 @@ target_link_libraries(
           merkle_server_lib
           merkle_client_lib
           filesutil
-          filehasher
           storage
           messages
           Qt6::Core

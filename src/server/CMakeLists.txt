@@ -12,14 +12,12 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/storage
          ${CMAKE_SOURCE_DIR}/src/common/filesystem
          ${CMAKE_SOURCE_DIR}/src/common/auth
-         ${CMAKE_SOURCE_DIR}/src/common
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib
   PRIVATE messages
           filesutil
           storage
-          filehasher
           sessionregistry
           Qt6::Core
           Qt6::Network)
