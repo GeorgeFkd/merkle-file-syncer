@@ -31,7 +31,10 @@ public:
 };
 class FileTree {
 public:
-  virtual ~FileTree() = default;
+  FileTree() = default;
+  FileTree(FileTree&&) = default;
+  FileTree &operator=(FileTree &&) = default;
+  // virtual ~FileTree() = default;
   virtual bool
   deleteFile(const std::string &relativePath,
              const QDateTime &deletedAt = QDateTime::currentDateTime()) = 0;
