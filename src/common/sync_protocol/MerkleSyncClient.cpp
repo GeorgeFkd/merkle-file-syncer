@@ -3,8 +3,8 @@
 #include "MerkleProtocolMessages.h"
 MerkleSyncClient::MerkleSyncClient(QObject *parent) : QObject(parent) {}
 
-const NegotiationState &MerkleSyncClient::getNegotiationState() const {
-  return negotiationState;
+const NegotiationState* MerkleSyncClient::getNegotiationState() const {
+  return &negotiationState;
 }
 
 void MerkleSyncClient::startNegotiation(MerkleTree *tree) {
@@ -21,7 +21,7 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
                                       MerkleTree *tree) {
   if (msg.phase == 2) {
     inProgress = false;
-    Q_EMIT negotiationCompleted();
+      Q_EMIT negotiationCompleted(negotiationState);
     return;
   }
 
@@ -140,5 +140,5 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
   }
 
   inProgress = false;
-  Q_EMIT negotiationCompleted();
+  Q_EMIT negotiationCompleted(negotiationState);
 }

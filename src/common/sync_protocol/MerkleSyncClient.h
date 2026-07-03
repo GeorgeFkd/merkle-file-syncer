@@ -13,11 +13,11 @@ public:
   void startNegotiation(MerkleTree *tree);
   void handleResponse(const MerkleProtocolMessage &msg, MerkleTree *tree);
 
-  const NegotiationState &getNegotiationState() const;
+  const NegotiationState *getNegotiationState() const;
 
 Q_SIGNALS:
   void messageSendRequest(MerkleProtocolMessage msg);
-  void negotiationCompleted();
+  void negotiationCompleted(const NegotiationState& state);
 
 private:
   NegotiationState negotiationState;

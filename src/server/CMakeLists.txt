@@ -12,6 +12,7 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/storage
          ${CMAKE_SOURCE_DIR}/src/common/filesystem
          ${CMAKE_SOURCE_DIR}/src/common/auth
+         ${CMAKE_SOURCE_DIR}/src/common/sync_protocol
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib
@@ -20,7 +21,8 @@ target_link_libraries(
           storage
           sessionregistry
           Qt6::Core
-          Qt6::Network)
+          Qt6::Network
+merkle_protocol_server)
 set_target_properties(merkle_server_lib PROPERTIES AUTOMOC ON)
 
 qt_add_executable(merkle_server main.cpp)

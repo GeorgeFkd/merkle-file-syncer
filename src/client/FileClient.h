@@ -2,30 +2,12 @@
 #include "ClientTransport.h"
 #include "FileDb.h"
 #include "LocalFileStorage.h"
+#include "MerkleSyncClient.h"
 #include "MerkleTree.h"
 #include "Messages.h"
 #include <QString>
 #include <QTimer>
-
-struct DeletionEntry {
-  QString path;
-  QDateTime deletedAt;
-};
-
-struct NodesDiff {
-  // the bool is to signal whether it is a file or not(true -> file, false
-  // ->directory) so we can later ask the server for whole directories
-  QList<QPair<bool, QString>> onlyInLeft;
-  QList<QPair<bool, QString>> onlyInRight;
-  QList<QString> modified;
-  QList<DeletionEntry> deletionWinsLeft;
-  QList<DeletionEntry> deletionWinsRight;
-};
-
-struct NegotiationState {
-  NodesDiff diffEntries;
-  QList<QString> directoriesToCheckWithServer;
-};
+#include "MerkleProtocolMessages.h"
 
 enum class SyncStrategy { Naive, Merkle };
 
@@ -64,7 +46,7 @@ public:
   std::optional<QDateTime> deleteFile(const QString &user, const QString &path);
 
   LocalFileStorage *getStorage();
-  NegotiationState *getNegotiationState();
+  const NegotiationState *getNegotiationState() const;
 
 Q_SIGNALS:
   void syncCompleted();
@@ -140,9 +122,9 @@ private:
   // --- Merkle negotiation ---
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;
-  NegotiationState negotiationState;
   void handleMerkleSyncResponse(MerkleSyncMessage *msg);
-  void handleNegotiationCompleted();
+  void handleNegotiationCompleted(const NegotiationState& state);
+  MerkleSyncClient merkleSyncClient;
 
   // --- Sync response handling ---
   void handleSyncResponse(SyncRequestMessage *msg);

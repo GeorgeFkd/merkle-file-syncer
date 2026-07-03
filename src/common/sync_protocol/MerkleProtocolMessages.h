@@ -39,3 +39,22 @@ struct MerkleProtocolMessage {
   QByteArray rootHash;
   QList<QPair<QString, QList<MerkleEntry>>> fileEntriesPerChild;
 };
+
+
+inline MerkleSyncMessage toWireMessage(MerkleProtocolMessage m) {
+  MerkleSyncMessage w;
+  w.phase = m.phase;
+  w.depth = m.depth;
+  w.rootHash = std::move(m.rootHash);
+  w.fileEntriesPerChild = std::move(m.fileEntriesPerChild);
+  return w;
+}
+
+inline MerkleProtocolMessage toProtocolMessage(MerkleSyncMessage w) {
+  MerkleProtocolMessage m;
+  m.phase = w.phase;
+  m.depth = w.depth;
+  m.rootHash = std::move(w.rootHash);
+  m.fileEntriesPerChild = std::move(w.fileEntriesPerChild);
+  return m;
+}

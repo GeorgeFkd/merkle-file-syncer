@@ -121,7 +121,7 @@ NodesDiff runNegotiation(MerkleTree &clientTree, MerkleTree &serverTree) {
   protocolClient.startNegotiation(&clientTree);
   assert(completed);
   qDebug() << "Negotiation Completed";
-  return protocolClient.getNegotiationState().diffEntries;
+  return protocolClient.getNegotiationState()->diffEntries;
 }
 
 QSet<QString> pathsOf(const QList<QPair<bool, QString>> &list) {
