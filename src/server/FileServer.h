@@ -1,6 +1,7 @@
 #pragma once
 #include "FileDb.h"
 #include "FileStorage.h"
+#include "MerkleSyncServer.h"
 #include "MerkleTree.h"
 #include "Messages.h"
 #include "ServerTransport.h"
@@ -84,7 +85,8 @@ private:
   ListResponseMessage handleListRequest(ListRequestMessage *msg);
 
   // --- Merkle negotiation ---
-  MerkleSyncMessage handleMerkleSyncRequest(MerkleSyncMessage *msg);
+  void handleMerkleSyncRequest(MerkleSyncMessage *msg);
+  MerkleSyncServer merkleSyncServer;
 
   // --- Misc ---
   void handleUnrecognized(Message *msg);

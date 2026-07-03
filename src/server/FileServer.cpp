@@ -29,7 +29,21 @@ void FileServer::start() {
 
 FileServer::~FileServer() {}
 
-void FileServer::setupConnections() { setupSocketConnections(); }
+void FileServer::setupConnections() {
+  setupSocketConnections();
+  QObject::connect(&merkleSyncServer, &MerkleSyncServer::messageSendRequest,
+                   this,
+                   [this](ConnectionId conn, MerkleProtocolMessage proto) {
+                     auto socket = socketToTokenMap.key(conn, nullptr);
+                     if (!socket) {
+                       qDebug() << "messageSend request could not be sent.";
+                       return;
+                     }
+                     auto wire = toWireMessage(proto);
+                     wire.token = conn;
+                     transport->send(socket, wire);
+                   });
+}
 
 void FileServer::setupSocketConnections() {
   QObject::connect(transport.get(), &ServerTransport::newConnection, this,
@@ -79,8 +93,7 @@ void FileServer::dispatch(QIODevice *socket, Message *msg) {
     break;
   }
   case MessageType::MerkleSync: {
-    auto resp = handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg));
-    transport->send(socket, resp);
+    handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg));
     break;
   }
   case MessageType::ListRequest: {
@@ -90,7 +103,7 @@ void FileServer::dispatch(QIODevice *socket, Message *msg) {
   }
   case MessageType::ChunkTransfer: {
     auto resp = handleChunkUpload(static_cast<ChunkTransferMessage *>(msg));
-    transport->send(socket,resp);
+    transport->send(socket, resp);
     break;
   }
   case MessageType::AckChunk: {
@@ -268,87 +281,15 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
   return raw;
 }
 
-MerkleSyncMessage FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
+void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle sync message at server";
   auto username = getUserFrom(msg);
   assert(username != "" &&
          "Token should always be set so we can fetch username on server");
 
   auto serverTree = getUserTree(username);
-  qDebug() << "Message from client to server: " << msg;
-
-  MerkleSyncMessage response;
-
-  // TODO: merge these two branches, getHashesAtDepth(1) and
-  // getChildHashes(path) might need to be merged somehow
-  if (msg->phase == 0) {
-    if (serverTree->rootHash() == msg->rootHash) {
-      qDebug() << "handleMerkleSyncRequest: roots match, negotiation complete";
-      response.phase = 2;
-      response.fileEntriesPerChild = {};
-      return response;
-    }
-    response.phase = 1;
-    response.depth = 1;
-    auto rootChildren = serverTree->getHashesAtDepth(1);
-    QList<MerkleEntry> childEntries;
-    for (const auto &[path, hash] : rootChildren) {
-      auto foundNode = serverTree->find(path.toStdString());
-      if (foundNode.has_value()) {
-        auto &[node, isTombstoned] = *foundNode;
-        MerkleEntry entry;
-        entry.path = path;
-        entry.hash = hash;
-        entry.mtime = node->mtime;
-        entry.filetype = node->type;
-        entry.isTombstone = isTombstoned;
-        entry.deletedAt = node->deletedAt;
-        childEntries.append(entry);
-        qDebug() << "Server building entry path(from getHashesAtDepth(1))="
-                 << node->path << "isTombstone=" << isTombstoned
-                 << "deletedAt=" << node->deletedAt;
-      }
-    }
-    response.fileEntriesPerChild.append({"", childEntries});
-    return response;
-  }
-
-  response.phase = 1;
-  response.depth = msg->depth;
-
-  for (const auto &[parentPath, _] : msg->fileEntriesPerChild) {
-    auto foundNode = serverTree->find(parentPath.toStdString());
-    assert(foundNode.has_value());
-    auto &[node, isTombstoned] = *foundNode;
-    assert(node->type == FileType::Directory);
-
-    auto childHashes = serverTree->getChildHashes(parentPath);
-    QList<MerkleEntry> childEntries;
-    for (const auto &[path, hash] : childHashes) {
-      auto childFound = serverTree->find(path.toStdString());
-      if (childFound.has_value()) {
-        auto &[childNode, childIsTombstoned] = *childFound;
-        MerkleEntry entry;
-        entry.path = path;
-        entry.hash = hash;
-        entry.mtime = childNode->mtime;
-        entry.filetype = childNode->type;
-        entry.isTombstone = childIsTombstoned;
-        entry.deletedAt = childNode->deletedAt;
-        childEntries.append(entry);
-        qDebug() << "Server building entry path=" << childNode->path
-                 << "isTombstone=" << childIsTombstoned
-                 << "deletedAt=" << childNode->deletedAt;
-      }
-    }
-    response.fileEntriesPerChild.append({parentPath, childEntries});
-  }
-
-  if (response.fileEntriesPerChild.isEmpty()) {
-    response.phase = 2;
-  }
-
-  return response;
+  merkleSyncServer.handleRequest(toProtocolMessage(*msg), serverTree,
+                                 msg->token);
 }
 
 ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
@@ -402,8 +343,7 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   assert(false);
 }
 
-
-void FileServer::handleAckChunk(AckChunkMessage* msg) {
+void FileServer::handleAckChunk(AckChunkMessage *msg) {
   qDebug() << "received ack chunk message on server";
 }
 
