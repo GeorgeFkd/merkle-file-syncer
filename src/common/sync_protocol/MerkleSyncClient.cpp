@@ -31,22 +31,15 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
     assert(parent.has_value());
     clientHashesOfNode = tree->getChildHashes(parentPath);
 
+    QHash<QString, MerkleEntry> serverByPath;
     QList<QPair<QString, QByteArray>> serverHashesOfNode;
     for (const auto &entry : fileEntries) {
       serverHashesOfNode.append({entry.path, entry.hash});
+      serverByPath.insert(entry.path, entry);
     }
 
     auto diff =
         MerkleTree::symmetricHashDiff(clientHashesOfNode, serverHashesOfNode);
-
-    auto findServerEntry =
-        [&fileEntries](const QString &path) -> std::optional<MerkleEntry> {
-      for (const auto &entry : fileEntries) {
-        if (entry.path == path)
-          return entry;
-      }
-      return {};
-    };
 
     auto addFilesFromClientInNegotiation = [&](const QList<QString> &paths) {
       for (const auto &entry : paths) {
@@ -65,15 +58,15 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
 
     auto addFilesFromServerInNegotiation = [&](const QList<QString> &paths) {
       for (const auto &entry : paths) {
-        auto serverEntry = findServerEntry(entry);
-        if (!serverEntry.has_value())
-          continue;
-        if (serverEntry->isTombstone) {
+        auto it = serverByPath.constFind(entry);
+        assert(it != serverByPath.cend());
+        const MerkleEntry &serverEntry = *it;
+        if (serverEntry.isTombstone) {
           negotiationState.diffEntries.deletionWinsRight.append(
-              {entry, serverEntry->deletedAt});
+              {entry, serverEntry.deletedAt});
         } else {
           negotiationState.diffEntries.onlyInRight.append(
-              {serverEntry->filetype == FileType::File, entry});
+              {serverEntry.filetype == FileType::File, entry});
         }
       }
     };
@@ -83,41 +76,50 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
         auto foundNode = tree->find(entry.toStdString());
         assert(foundNode.has_value());
         auto &[node, clientHasTombstone] = *foundNode;
+        auto it = serverByPath.constFind(entry);
+        assert(it != serverByPath.cend());
+        const MerkleEntry &serverEntry = *it;
 
-        auto serverEntry = findServerEntry(entry);
-        if (!serverEntry.has_value())
+        bool serverHasTombstone = serverEntry.isTombstone;
+
+        bool bothHaveTombstone = clientHasTombstone && serverHasTombstone;
+        if (bothHaveTombstone)
           continue;
-        bool serverIsTombstone = serverEntry->isTombstone;
 
-        if (clientHasTombstone && serverIsTombstone)
-          continue;
-
-        if (clientHasTombstone && !serverIsTombstone) {
-          if (node->deletedAt > serverEntry->mtime) {
+        bool onlyClientHasTombstone = clientHasTombstone && !serverHasTombstone;
+        if (onlyClientHasTombstone) {
+          bool clientDeletionLaterThanServerTime =
+              node->deletedAt > serverEntry.mtime;
+          if (clientDeletionLaterThanServerTime) {
             negotiationState.diffEntries.deletionWinsLeft.append(
                 {entry, node->deletedAt});
           } else {
             negotiationState.diffEntries.onlyInRight.append(
-                {serverEntry->filetype == FileType::File, entry});
+                {serverEntry.filetype == FileType::File, entry});
           }
           continue;
         }
 
-        if (!clientHasTombstone && serverIsTombstone) {
-          if (serverEntry->deletedAt > node->mtime) {
+        bool onlyServerHasTombstone = !clientHasTombstone && serverHasTombstone;
+        if (onlyServerHasTombstone) {
+          auto serverDeletionLaterThanLocalMtime =
+              serverEntry.deletedAt > node->mtime;
+          if (serverDeletionLaterThanLocalMtime) {
             negotiationState.diffEntries.deletionWinsRight.append(
-                {entry, serverEntry->deletedAt});
+                {entry, serverEntry.deletedAt});
           } else {
             negotiationState.diffEntries.onlyInLeft.append(
                 {node->type == FileType::File, entry});
           }
           continue;
         }
-
-        if (node->type == FileType::Directory) {
-          negotiationState.directoriesToCheckWithServer.append(entry);
-        } else {
-          negotiationState.diffEntries.modified.append(entry);
+        bool noTombstones = !clientHasTombstone && !serverHasTombstone;
+        if (noTombstones) {
+          if (node->type == FileType::Directory) {
+            negotiationState.directoriesToCheckWithServer.append(entry);
+          } else {
+            negotiationState.diffEntries.modified.append(entry);
+          }
         }
       }
     };
