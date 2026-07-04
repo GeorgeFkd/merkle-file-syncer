@@ -1,7 +1,7 @@
 #include "MerkleSyncServer.h"
-#include "Messages.h"
-#include "MerkleTree.h"
 #include "FileTree.h"
+#include "MerkleTree.h"
+#include "Messages.h"
 MerkleSyncServer::MerkleSyncServer(QObject *parent) : QObject(parent) {}
 
 void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
@@ -12,7 +12,8 @@ void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
     QList<MerkleEntry> entries;
     for (const auto &[path, hash] : pathHashes) {
       auto found = tree->find(path.toStdString());
-      if (!found.has_value()) continue;
+      if (!found.has_value())
+        continue;
       auto &[node, isTombstoned] = *found;
       MerkleEntry entry;
       entry.path = path;
@@ -34,7 +35,9 @@ void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
     }
     response.phase = 1;
     response.depth = 1;
-    response.fileEntriesPerChild.append({"", toEntries(tree->getHashesAtDepth(1))});
+    auto rootPath = QString("");
+    response.fileEntriesPerChild.append(
+        {rootPath, toEntries(tree->getChildHashes(rootPath))});
     Q_EMIT messageSendRequest(conn, response);
     return;
   }

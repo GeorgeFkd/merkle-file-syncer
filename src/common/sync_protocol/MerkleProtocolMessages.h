@@ -24,19 +24,11 @@ struct NegotiationState {
   QList<QString> directoriesToCheckWithServer;
 };
 
-// struct MerkleEntry {
-//   QString path;
-//   QByteArray hash;
-//   QDateTime mtime;
-//   FileType filetype;
-//   bool isTombstone;
-//   QDateTime deletedAt;
-// };
-
 struct MerkleProtocolMessage {
   int phase;
   int depth;
   QByteArray rootHash;
+  //Ideally i would want it to be Map<QString,QList<MerkleEntry>>
   QList<QPair<QString, QList<MerkleEntry>>> fileEntriesPerChild;
 };
 

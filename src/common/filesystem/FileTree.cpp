@@ -6,6 +6,9 @@
 
 std::optional<std::tuple<FileNode *,bool>>
 FileTree::find(const std::string &relativePath) const {
+  if(relativePath.empty()){
+    return std::make_tuple(root.get(),root->isDeleted);
+  }
   auto parts =
       QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
   FileNode *current = getRoot();

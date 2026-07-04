@@ -4,7 +4,6 @@
 #include <QFile>
 #include <QFileInfo>
 
-
 // (lhs - rhs) ∪ (rhs - lhs) ∪ {x ∈ lhs ∩ rhs | hash_a(x) ≠ hash_b(x)}
 TreeDiff
 MerkleTree::symmetricHashDiff(const QList<QPair<QString, QByteArray>> &lhs,
@@ -251,9 +250,9 @@ QByteArray MerkleTree::hashTombstoned(const FileNode *node) const {
 }
 
 void MerkleTree::propagateHashDownward(FileNode *node) {
-  //if it is a file and not deleted the hash is already there from addFile
-  //this is only needed after marking tombstones downward as addFile only needs
-  //to propagate upward.
+  // if it is a file and not deleted the hash is already there from addFile
+  // this is only needed after marking tombstones downward as addFile only needs
+  // to propagate upward.
   if (node->isDeleted) {
     node->hash = hashTombstoned(node);
   } else if (node->type == FileType::Directory) {
