@@ -29,9 +29,9 @@ void ChunkingServer::handleRequestChunkSizeForUpload(
       static_cast<quint32>((msg.fileSize + chunkSize - 1) / chunkSize);
 
   ServerUploadState state;
-  state.currentPartNumber = 0;
-  state.totalPartsToReceive = totalChunks;
-  state.agreedChunkSize = chunkSize;
+  state.transferProgress.currentPartNumber = 0;
+  state.transferProgress.totalParts = totalChunks;
+  state.transferProgress.chunkSize = chunkSize;
   uploadStates.insert(TransferKey{clientId, msg.path}, state);
 
   Q_EMIT specifyChunkSizeUploadSendRequest(
@@ -54,37 +54,37 @@ void ChunkingServer::handleRequestChunkSizeForDownload(
   const quint32 totalChunks =
       static_cast<quint32>((fileSize + chunkSize - 1) / chunkSize);
 
+  const TransferKey key{clientId, msg.path};
+
   ServerDownloadState state;
-  state.currentPartNumber = 0;
-  state.totalPartsToSend = totalChunks;
-  state.agreedChunkSize = chunkSize;
-  downloadStates.insert(TransferKey{clientId, msg.path}, state);
+  state.transferProgress.currentPartNumber = 1;
+  state.transferProgress.totalParts = totalChunks;
+  state.transferProgress.chunkSize = chunkSize;
+  downloadStates.insert(key, state);
 
   Q_EMIT specifyChunkSizeDownloadSendRequest(
       clientId, SpecifyChunkSizeDownload{msg.path, chunkSize, totalChunks});
 
   // server drives the download: send the first chunk immediately.
-  auto it = downloadStates.find(TransferKey{clientId, msg.path});
-  it->currentPartNumber = 1;
-  sendChunk(clientId, msg.path, it->currentPartNumber,
-            static_cast<quint32>(chunkSize));
+  sendChunk(clientId, msg.path, 1);
 }
 
 void ChunkingServer::sendChunk(const ClientId &clientId, const QString &path,
-                               quint32 partNumber, quint32 chunkSize) {
+                               quint32 partNumber) {
   Q_ASSERT_X(reader, "sendChunk", "reader not set");
   auto it = downloadStates.find(TransferKey{clientId, path});
   Q_ASSERT_X(it != downloadStates.end(), "sendChunk",
              "no download state for (clientId, path)");
 
   const quint64 offset =
-      static_cast<quint64>(partNumber - 1) * it->agreedChunkSize;
-  const QByteArray bytes = reader(clientId, path, offset, it->agreedChunkSize);
+      static_cast<quint64>(partNumber - 1) * it->transferProgress.chunkSize;
+  const QByteArray bytes =
+      reader(clientId, path, offset, it->transferProgress.chunkSize);
 
   ChunkTransfer msg;
   msg.filepath = path;
   msg.partNumber = partNumber;
-  msg.chunkSize = chunkSize;
+  msg.chunkSize = it->transferProgress.chunkSize;
   msg.bytes = bytes;
 
   Q_EMIT chunkTransferSendRequest(clientId, msg);
@@ -97,14 +97,13 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   Q_ASSERT_X(it != uploadStates.end(), "handleChunkReceived",
              "no upload state for (clientId, path)");
 
-  it->currentPartNumber = msg.partNumber;
+  it->transferProgress.currentPartNumber = msg.partNumber;
   const quint64 offset =
-      static_cast<quint64>(msg.partNumber - 1) * it->agreedChunkSize;
-  const bool uploadFinished = it->currentPartNumber == it->totalPartsToReceive;
+      static_cast<quint64>(msg.partNumber - 1) * it->transferProgress.chunkSize;
+  const bool uploadFinished = it->transferProgress.isComplete();
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash uploadStates, invalidating this iterator.
 
-  // WriteCommand::bytes is a reference -> requires a direct connection.
   Q_EMIT chunkToUploadArrived(
       ServerWriteCommand{clientId, msg.filepath, msg.bytes, offset});
 
@@ -134,15 +133,13 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
     return;
   }
 
-  bool downloadFinished = it->currentPartNumber == it->totalPartsToSend;
-  if (downloadFinished) {
+  if (it->transferProgress.isComplete()) {
     const QString path = msg.path;
     downloadStates.remove(TransferKey{clientId, path});
     Q_EMIT downloadCompleted(clientId, path);
     return;
   }
 
-  it->currentPartNumber = it->currentPartNumber + 1;
-  sendChunk(clientId, msg.path, it->currentPartNumber,
-            static_cast<quint32>(it->agreedChunkSize));
+  it->transferProgress.currentPartNumber += 1;
+  sendChunk(clientId, msg.path, it->transferProgress.currentPartNumber);
 }

@@ -8,15 +8,11 @@
 #include <functional>
 
 struct ServerUploadState {
-  quint32 currentPartNumber = 0;
-  quint32 totalPartsToReceive = 0;
-  quint64 agreedChunkSize = 0;
+  TransferProgress transferProgress;
 };
 
 struct ServerDownloadState {
-  quint32 currentPartNumber = 0;
-  quint32 totalPartsToSend = 0;
-  quint64 agreedChunkSize = 0;
+  TransferProgress transferProgress;
 };
 
 using ClientId = QString;
@@ -38,13 +34,12 @@ public:
   using ChunkReader = std::function<QByteArray(
       const ClientId &, const QString &path, quint64 offset, quint64 length)>;
 
-  using MetadataReader = std::function<quint64(const ClientId&,const QString &path)>;
+  using MetadataReader =
+      std::function<quint64(const ClientId &, const QString &path)>;
 
   explicit ChunkingServer(QObject *parent = nullptr);
 
   void setChunkSizeCalculator(ChunkSizeCalculator calc);
-  void sendChunk(const ClientId &clientId, const QString &path,
-                 quint32 partNumber, quint32 chunkSize);
   void setReader(ChunkReader reader);
   void setMetadataReader(MetadataReader reader);
 
@@ -53,6 +48,7 @@ public:
   void
   handleRequestChunkSizeForDownload(const ClientId &clientId,
                                     const RequestChunkSizeForDownload &msg);
+
   void handleChunkReceived(const ClientId &clientId, const ChunkTransfer &msg);
   void handleAckChunkOfDownload(const ClientId &clientId,
                                 const ACKChunkReceived &msg);
@@ -69,6 +65,8 @@ Q_SIGNALS:
                                            SpecifyChunkSizeDownload msg);
 
 private:
+  void sendChunk(const ClientId &clientId, const QString &path,
+                 quint32 partNumber);
   ChunkSizeCalculator chunkSizeCalculator;
   ChunkReader reader;
   MetadataReader metadataReader;

@@ -14,12 +14,13 @@ void ChunkingClient::setMetadataReader(MetadataReader reader) {
 
 void ChunkingClient::startUpload(const QString &path) {
   assert(metadataReader != nullptr);
+  assert(reader != nullptr);
   const quint64 fileSize = metadataReader(path);
 
   ClientUploadState state;
-  state.currentPartNumber = 1;
-  state.totalPartsToSend = 0;
-  state.selectedChunkSize = 0;
+  state.transferProgress.currentPartNumber = 1;
+  state.transferProgress.totalParts = 0;
+  state.transferProgress.chunkSize = 0;
   uploadStates.insert(path, state);
 
   Q_EMIT requestChunkSizeForUploadSendRequest(
@@ -29,9 +30,9 @@ void ChunkingClient::startUpload(const QString &path) {
 void ChunkingClient::startDownload(const QString &path,
                                    quint64 desiredChunkSize) {
   ClientDownloadState state;
-  state.currentPartNumber = 1;
-  state.totalPartsToSend = 0;
-  state.selectedChunkSize = 0;
+  state.transferProgress.currentPartNumber = 1;
+  state.transferProgress.totalParts = 0;
+  state.transferProgress.chunkSize = 0;
   downloadStates.insert(path, state);
 
   Q_EMIT requestChunkSizeForDownloadSendRequest(
@@ -47,22 +48,21 @@ void ChunkingClient::handleUploadSizeReceived(
 
   assert(msg.chunkSize != 0 && "Chunk Size should not be zero.");
   assert(msg.totalChunks != 0 && "Total Chunks should not be zero.");
-  it->selectedChunkSize = msg.chunkSize;
-  it->totalPartsToSend = msg.totalChunks;
+  it->transferProgress.chunkSize = msg.chunkSize;
+  it->transferProgress.totalParts = msg.totalChunks;
 
-  sendPart(msg.path, it->currentPartNumber);
+  sendPart(msg.path, it->transferProgress.currentPartNumber);
 }
 
 void ChunkingClient::sendPart(const QString &path, quint32 partNumber) {
-  assert(reader != nullptr);
   assert(partNumber > 0 && "Part number is 1-indexed");
   auto it = uploadStates.find(path);
   assert(it != uploadStates.end() &&
          "In send part path should be in upload states");
 
   const quint64 offset =
-      static_cast<quint64>(partNumber - 1) * it->selectedChunkSize;
-  const QByteArray bytes = reader(path, offset, it->selectedChunkSize);
+      static_cast<quint64>(partNumber - 1) * it->transferProgress.chunkSize;
+  const QByteArray bytes = reader(path, offset, it->transferProgress.chunkSize);
 
   ChunkTransfer msg;
   msg.filepath = path;
@@ -82,8 +82,7 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived &ackMsg) {
     return;
   }
 
-  const bool finishedUpload =
-      it->currentPartNumber == it->totalPartsToSend;
+  const bool finishedUpload = it->transferProgress.currentPartNumber == it->transferProgress.totalParts;
   if (finishedUpload) {
     const QString path = ackMsg.path;
     uploadStates.remove(path);
@@ -91,38 +90,35 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived &ackMsg) {
     return;
   }
 
-  const quint32 nextPart = it->currentPartNumber + 1;
-  it->currentPartNumber = nextPart;
+  const quint32 nextPart = it->transferProgress.currentPartNumber + 1;
+  it->transferProgress.currentPartNumber = nextPart;
   // 'it' must not be used after sendPart: it emits and re-enters, which can
   // rehash uploadStates and invalidate the iterator.
   sendPart(ackMsg.path, nextPart);
 }
-
 
 void ChunkingClient::handleDownloadSizeReceived(
     const SpecifyChunkSizeDownload &msg) {
   auto it = downloadStates.find(msg.path);
   assert(it != downloadStates.end());
 
-  it->selectedChunkSize = msg.chunkSize;
-  it->totalPartsToSend = msg.totalChunks;
+  it->transferProgress.chunkSize = msg.chunkSize;
+  it->transferProgress.totalParts = msg.totalChunks;
 }
 
 void ChunkingClient::handleChunkReceived(const ChunkTransfer &msg) {
   auto it = downloadStates.find(msg.filepath);
   assert(it != downloadStates.end());
 
-  const quint64 chunkSz = it->selectedChunkSize;
-  const quint32 totalParts = it->totalPartsToSend;
+  const quint64 chunkSz = it->transferProgress.chunkSize;
+  const quint32 totalParts = it->transferProgress.totalParts;
   const quint32 nextPart = msg.partNumber + 1;
-  it->currentPartNumber = nextPart;
-  const bool finishedDownloading =
-      totalParts != 0 && nextPart > totalParts;
+  it->transferProgress.currentPartNumber = nextPart;
+  const bool finishedDownloading = totalParts != 0 && nextPart > totalParts;
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash downloadStates, invalidating this iterator.
 
-  const quint64 offset =
-      static_cast<quint64>(msg.partNumber - 1) * chunkSz;
+  const quint64 offset = static_cast<quint64>(msg.partNumber - 1) * chunkSz;
 
   Q_EMIT writeRequested(WriteCommand{msg.filepath, offset, msg.bytes});
 

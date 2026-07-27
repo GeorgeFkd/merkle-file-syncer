@@ -48,3 +48,13 @@ struct SpecifyChunkSizeDownload {
   quint64 chunkSize;
   quint32 totalChunks;
 };
+
+class TransferProgress {
+public:
+  //1-indexed
+  quint32 currentPartNumber = 0;
+  quint32 totalParts = 0;
+  quint64 chunkSize = 0;
+  bool isComplete() const;
+  quint8 progressPercent() const;
+};

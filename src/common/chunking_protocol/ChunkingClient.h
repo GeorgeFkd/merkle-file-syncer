@@ -1,30 +1,14 @@
 #pragma once
-
 #include "ChunkingProtocolMessages.h"
 #include <QHash>
 #include <QObject>
 #include <QString>
 
-// there is two acks, that the server received the chunk from the client during
-// upload and that the client received the chunk from the server during
-// download.
-//
-// in upload: the client sends (path,fileSize) server responds (path,chunkSize)
-// in download: the client sends (path,chunkSizeWanted) server responds
-// (path,chunkSize) so we need two messages for (path,ChunkSize) for server to
-// respond with and we need two messages for Client to send:
-// (path,fileSize),(path,ChunkSizeWanted)
-
 struct ClientUploadState {
-  //1-indexed
-  quint32 currentPartNumber = 1;
-  quint32 totalPartsToSend = 0;
-  quint64 selectedChunkSize = 0; // chosen by the server
+  TransferProgress transferProgress;
 };
 struct ClientDownloadState {
-  quint32 currentPartNumber = 1;
-  quint32 totalPartsToSend = 0;
-  quint64 selectedChunkSize = 0; // chosen by the server
+   TransferProgress transferProgress;
 };
 struct WriteCommand {
   QString path;
