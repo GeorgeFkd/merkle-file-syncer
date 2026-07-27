@@ -1,0 +1,77 @@
+#pragma once
+
+#include "ChunkingProtocolMessages.h"
+#include <QHash>
+#include <QObject>
+#include <QPair>
+#include <QString>
+#include <functional>
+
+struct ServerUploadState {
+  quint32 currentPartNumber = 0;
+  quint32 totalPartsToReceive = 0;
+  quint64 agreedChunkSize = 0;
+};
+
+struct ServerDownloadState {
+  quint32 currentPartNumber = 0;
+  quint32 totalPartsToSend = 0;
+  quint64 agreedChunkSize = 0;
+};
+
+using ClientId = QString;
+using TransferKey = QPair<ClientId, QString>; // (clientId, path)
+
+struct ServerWriteCommand {
+  ClientId client;
+  QString path;
+  QByteArray bytes;
+  quint64 offset;
+};
+
+class ChunkingServer : public QObject {
+  Q_OBJECT
+public:
+  using ChunkSizeCalculator =
+      std::function<quint64(const ClientId &, const QString &, quint64 fileSize,
+                            quint64 desiredChunkSize)>;
+  using ChunkReader = std::function<QByteArray(
+      const ClientId &, const QString &path, quint64 offset, quint64 length)>;
+
+  using MetadataReader = std::function<quint64(const ClientId&,const QString &path)>;
+
+  explicit ChunkingServer(QObject *parent = nullptr);
+
+  void setChunkSizeCalculator(ChunkSizeCalculator calc);
+  void sendChunk(const ClientId &clientId, const QString &path,
+                 quint32 partNumber, quint32 chunkSize);
+  void setReader(ChunkReader reader);
+  void setMetadataReader(MetadataReader reader);
+
+  void handleRequestChunkSizeForUpload(const ClientId &clientId,
+                                       const RequestChunkSizeForUpload &msg);
+  void
+  handleRequestChunkSizeForDownload(const ClientId &clientId,
+                                    const RequestChunkSizeForDownload &msg);
+  void handleChunkReceived(const ClientId &clientId, const ChunkTransfer &msg);
+  void handleAckChunkOfDownload(const ClientId &clientId,
+                                const ACKChunkReceived &msg);
+
+Q_SIGNALS:
+  void uploadCompleted(ClientId clientId, QString path);
+  void downloadCompleted(ClientId clientId, QString path);
+  void chunkToUploadArrived(ServerWriteCommand writeCmd);
+  void chunkTransferSendRequest(ClientId clientId, ChunkTransfer msg);
+  void ackChunkReceivedSendRequest(ClientId clientId, ACKChunkReceived msg);
+  void specifyChunkSizeUploadSendRequest(ClientId clientId,
+                                         SpecifyChunkSizeUpload msg);
+  void specifyChunkSizeDownloadSendRequest(ClientId clientId,
+                                           SpecifyChunkSizeDownload msg);
+
+private:
+  ChunkSizeCalculator chunkSizeCalculator;
+  ChunkReader reader;
+  MetadataReader metadataReader;
+  QHash<TransferKey, ServerUploadState> uploadStates;
+  QHash<TransferKey, ServerDownloadState> downloadStates;
+};

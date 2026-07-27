@@ -74,3 +74,44 @@ ${CMAKE_SOURCE_DIR}/src/common/filesystem
 ${CMAKE_SOURCE_DIR}/src/common/sync_protocol)
 set_target_properties(protocol_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(protocol_tests PROPERTIES ENVIRONMENT "RC_PARAMS=max_success=500 max_size=300")
+
+option(ENABLE_ASAN "Build tests with AddressSanitizer" OFF)
+
+add_executable(chunking_tests main.cpp chunking_tests.cpp)
+
+target_link_libraries(chunking_tests PRIVATE
+  GTest::gtest
+  rapidcheck
+  chunking_client
+  chunking_server
+  Qt6::Core
+)
+
+target_include_directories(chunking_tests PRIVATE
+  ${TEST_COMMON_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol
+)
+
+set_target_properties(chunking_tests PROPERTIES AUTOMOC ON)
+
+if(ENABLE_ASAN)
+  target_compile_options(chunking_tests PRIVATE
+    -fsanitize=address -g -O1 -fno-omit-frame-pointer)
+  target_link_options(chunking_tests PRIVATE -fsanitize=address)
+endif()
+
+gtest_discover_tests(chunking_tests)
+
+# add_executable(chunking_tests main.cpp chunking_tests.cpp)
+# target_link_libraries(chunking_tests PRIVATE 
+#   GTest::gtest
+#   rapidcheck
+#   chunking_client
+#   chunking_server
+#   Qt6::Core
+# )
+# target_include_directories(chunking_tests PRIVATE ${TEST_COMMON_INCLUDES}
+# ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol)
+#
+# set_target_properties(chunking_tests PROPERTIES AUTOMOC ON)
+# gtest_discover_tests(chunking_tests)
