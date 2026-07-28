@@ -78,11 +78,12 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived &ackMsg) {
   assert(it != uploadStates.end());
   if (!ackMsg.failureType.isEmpty()) {
     assert(!ackMsg.failureMsg.isEmpty());
+    it->transferProgress.currentPhase = TransferPhase::FAILED;
     qDebug() << ackMsg;
     return;
   }
 
-  const bool finishedUpload = it->transferProgress.currentPartNumber == it->transferProgress.totalParts;
+  const bool finishedUpload = it->transferProgress.recordConfirmedPart(ackMsg.partNumber);
   if (finishedUpload) {
     const QString path = ackMsg.path;
     uploadStates.remove(path);
@@ -90,11 +91,10 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived &ackMsg) {
     return;
   }
 
-  const quint32 nextPart = it->transferProgress.currentPartNumber + 1;
-  it->transferProgress.currentPartNumber = nextPart;
+  
   // 'it' must not be used after sendPart: it emits and re-enters, which can
   // rehash uploadStates and invalidate the iterator.
-  sendPart(ackMsg.path, nextPart);
+  sendPart(ackMsg.path, ackMsg.partNumber + 1);
 }
 
 void ChunkingClient::handleDownloadSizeReceived(
@@ -114,6 +114,7 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer &msg) {
   const quint32 totalParts = it->transferProgress.totalParts;
   const quint32 nextPart = msg.partNumber + 1;
   it->transferProgress.currentPartNumber = nextPart;
+  //TODO make consistent the way the increments work
   const bool finishedDownloading = totalParts != 0 && nextPart > totalParts;
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash downloadStates, invalidating this iterator.

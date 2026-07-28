@@ -10,3 +10,12 @@ quint8 TransferProgress::progressPercent() const {
 bool TransferProgress::isComplete() const {
   return totalParts != 0 && currentPartNumber == totalParts;
 }
+
+bool TransferProgress::recordConfirmedPart(quint32 partNumber) {
+  currentPartNumber = partNumber;
+  const bool done = isComplete();
+  if(done){
+    currentPhase = TransferPhase::COMPLETED;
+  }
+  return done;
+}

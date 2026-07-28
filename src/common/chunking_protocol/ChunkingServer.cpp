@@ -97,10 +97,10 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   Q_ASSERT_X(it != uploadStates.end(), "handleChunkReceived",
              "no upload state for (clientId, path)");
 
-  it->transferProgress.currentPartNumber = msg.partNumber;
+  // it->transferProgress.currentPartNumber = msg.partNumber;
   const quint64 offset =
       static_cast<quint64>(msg.partNumber - 1) * it->transferProgress.chunkSize;
-  const bool uploadFinished = it->transferProgress.isComplete();
+  const bool uploadFinished = it->transferProgress.recordConfirmedPart(msg.partNumber);
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash uploadStates, invalidating this iterator.
 
@@ -133,13 +133,15 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
     return;
   }
 
-  if (it->transferProgress.isComplete()) {
+  const bool finishedDownload = it->transferProgress.recordConfirmedPart(msg.partNumber);
+
+  if (finishedDownload) {
     const QString path = msg.path;
     downloadStates.remove(TransferKey{clientId, path});
     Q_EMIT downloadCompleted(clientId, path);
     return;
   }
 
-  it->transferProgress.currentPartNumber += 1;
-  sendChunk(clientId, msg.path, it->transferProgress.currentPartNumber);
+  const quint32 nextPart = msg.partNumber + 1;
+  sendChunk(clientId, msg.path, nextPart);
 }

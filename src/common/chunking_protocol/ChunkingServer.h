@@ -65,7 +65,7 @@ Q_SIGNALS:
                                            SpecifyChunkSizeDownload msg);
 
 private:
-  void sendChunk(const ClientId &clientId, const QString &path,
+  void sendPart(const ClientId &clientId, const QString &path,
                  quint32 partNumber);
   ChunkSizeCalculator chunkSizeCalculator;
   ChunkReader reader;
