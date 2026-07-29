@@ -27,4 +27,12 @@ public:
                                               const QString &path,
                                               qint64 offset,
                                               qint64 length) const = 0;
+
+  virtual bool beginWrite(const QString &user, const QString &path,
+                          qint64 totalSize, qint64 chunkSize) = 0;
+  virtual bool writeRange(const QString &user, const QString &path,
+                          quint32 partNumber, qint64 offset,
+                          const QByteArray &bytes) = 0;
+  virtual bool finishWrite(const QString &user, const QString &path) = 0;
+  virtual bool abortWrite(const QString &user, const QString &path) = 0;
 };

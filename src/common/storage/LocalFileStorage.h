@@ -1,6 +1,7 @@
 #pragma once
 #include "FileStorage.h"
 #include <QDateTime>
+#include <QSaveFile>
 class LocalFileStorage : public FileStorage {
 public:
   LocalFileStorage();
@@ -23,7 +24,20 @@ public:
                                       qint64 offset,
                                       qint64 length) const override;
 
+  bool beginWrite(const QString &user, const QString &path, qint64 totalSize,
+                  qint64 chunkSize) override;
+
+  bool writeRange(const QString& user, const QString& path, quint32 partNumber,qint64 offset, const QByteArray& bytes) override;
+
+  bool finishWrite(const QString& user, const QString& path) override;
+
+  bool abortWrite(const QString& user, const QString& path) override;
+
 private:
+  
+  QString saveKeyFor(const QString& user, const QString &path) const;
+
   QString fullPath(const QString &user, const QString &filename) const;
   QString rootDir;
+  QHash<QString,std::shared_ptr<QSaveFile>> activeSaveFiles;
 };

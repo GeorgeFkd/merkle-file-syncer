@@ -1,9 +1,9 @@
 #include "LocalFileStorage.h"
+#include "S3FileStorage.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QUuid>
 #include <gtest/gtest.h>
-#include "S3FileStorage.h"
 
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -12,7 +12,6 @@ struct LocalStorageTag {
     return s;
   }
 };
-
 
 struct S3StorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &) {
@@ -26,15 +25,13 @@ struct S3StorageTag {
   }
 };
 
-using StorageImplementations =
-    ::testing::Types<LocalStorageTag, S3StorageTag>;
+using StorageImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
 
 template <typename Tag> class StorageTest : public ::testing::Test {
 protected:
   void SetUp() override {
     runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    rootDir =
-        QDir(QDir::tempPath() + "/test_storage/" + runId);
+    rootDir = QDir(QDir::tempPath() + "/test_storage/" + runId);
     QDir().mkpath(rootDir.path());
 
     storage = Tag::makeStorage(rootDir.path());
@@ -69,8 +66,7 @@ TYPED_TEST(StorageTest, writeThenReadReturnsSameBytes) {
 
 TYPED_TEST(StorageTest, writeThenReadNestedPath) {
   QByteArray contents = "nested content";
-  ASSERT_TRUE(
-      this->storage->writeFile(this->user, "a/b/c/test.txt", contents));
+  ASSERT_TRUE(this->storage->writeFile(this->user, "a/b/c/test.txt", contents));
   auto read = this->storage->readFile(this->user, "a/b/c/test.txt");
   ASSERT_TRUE(read.has_value());
   ASSERT_EQ(read.value(), contents);
@@ -132,7 +128,8 @@ TYPED_TEST(StorageTest, crossUserIsolation) {
 }
 
 // --- Edge cases ---
-//this is important to be tested bcs on S3 when you say length=0 it returns the whole file
+// this is important to be tested bcs on S3 when you say length=0 it returns the
+// whole file
 TYPED_TEST(StorageTest, readRangeZeroLengthReturnsEmpty) {
   this->storage->writeFile(this->user, "f.txt", "hello");
   auto chunk = this->storage->readRange(this->user, "f.txt", 0, 0);
@@ -191,8 +188,6 @@ TYPED_TEST(StorageTest, cleanupDoesNotAffectOtherUsers) {
   ASSERT_TRUE(aliceFiles.isEmpty());
   ASSERT_EQ(bobFiles.size(), 1);
 }
-
-
 
 // --- fileSize ---
 
@@ -301,10 +296,100 @@ TYPED_TEST(StorageTest, readRangeBinaryContentRoundTrips) {
   ASSERT_EQ(chunk.value(), contents);
 }
 
+static constexpr qint64 S3_MIN_PART_SIZE = 5 * 1024 * 1024;
+
+TYPED_TEST(StorageTest, chunkedWriteRoundTripsHappyPathUsage) {
+  const qint64 chunkSize = S3_MIN_PART_SIZE;
+  QByteArray part1(chunkSize, 'a');
+  QByteArray part2(1234, 'b');
+  QByteArray original = part1 + part2;
+
+  ASSERT_TRUE(this->storage->beginWrite(this->user, "ooo.bin",
+                                        original.size(), chunkSize));
+  // part 2 first, then part 1
+  ASSERT_TRUE(this->storage->writeRange(this->user, "ooo.bin", 2, chunkSize,
+                                        part2));
+  ASSERT_TRUE(this->storage->writeRange(this->user, "ooo.bin", 1, 0, part1));
+  ASSERT_TRUE(this->storage->finishWrite(this->user, "ooo.bin"));
+
+  auto read = this->storage->readFile(this->user, "ooo.bin");
+  ASSERT_TRUE(read.has_value());
+  ASSERT_EQ(read.value(), original);
+}
+
+TYPED_TEST(StorageTest, chunkedWriteOutOfOrder) {
+  const qint64 chunkSize = S3_MIN_PART_SIZE;
+  QByteArray part1(chunkSize, 'a');
+  QByteArray part2(1234, 'b');
+  QByteArray original = part1 + part2;
+
+  ASSERT_TRUE(this->storage->beginWrite(this->user, "ooo.bin",
+                                        original.size(), chunkSize));
+  // part 2 first, then part 1
+  ASSERT_TRUE(this->storage->writeRange(this->user, "ooo.bin", 2, chunkSize,
+                                        part2));
+  ASSERT_TRUE(this->storage->writeRange(this->user, "ooo.bin", 1, 0, part1));
+  ASSERT_TRUE(this->storage->finishWrite(this->user, "ooo.bin"));
+
+  auto read = this->storage->readFile(this->user, "ooo.bin");
+  ASSERT_TRUE(read.has_value());
+  ASSERT_EQ(read.value(), original);
+}
+
+
+TYPED_TEST(StorageTest, fileInvisibleUntilFinish) {
+  const qint64 chunkSize = S3_MIN_PART_SIZE;
+  QByteArray part1(chunkSize, 'a');
+  QByteArray part2(1234, 'b');
+  const qint64 total = part1.size() + part2.size();
+
+  ASSERT_TRUE(this->storage->beginWrite(this->user, "pending.bin", total,
+                                        chunkSize));
+  ASSERT_TRUE(this->storage->writeRange(this->user, "pending.bin", 1, 0,
+                                        part1));
+
+  auto midRead = this->storage->readFile(this->user, "pending.bin");
+  ASSERT_FALSE(midRead.has_value());
+
+  ASSERT_TRUE(this->storage->writeRange(this->user, "pending.bin", 2, chunkSize,
+                                        part2));
+  ASSERT_TRUE(this->storage->finishWrite(this->user, "pending.bin"));
+
+  auto finalRead = this->storage->readFile(this->user, "pending.bin");
+  ASSERT_TRUE(finalRead.has_value());
+}
+
+// abortWrite discards everything; nothing lands at the real path.
+TYPED_TEST(StorageTest, abortDiscardsPartialWrite) {
+  ASSERT_TRUE(this->storage->beginWrite(this->user, "aborted.bin", 20, 10));
+  ASSERT_TRUE(this->storage->writeRange(this->user, "aborted.bin", 1, 0,
+                                        QByteArray(10, 'x')));
+  ASSERT_TRUE(this->storage->abortWrite(this->user, "aborted.bin"));
+
+  auto read = this->storage->readFile(this->user, "aborted.bin");
+  ASSERT_FALSE(read.has_value());
+}
+
+// writeRange with no active transfer fails rather than crashing.
+TYPED_TEST(StorageTest, writeRangeWithoutBeginFails) {
+  EXPECT_DEATH(this->storage->writeRange(this->user, "nope.bin", 1, 0,
+                                         QByteArray("data")),
+               "");
+}
+
+// finishWrite with no active transfer fails.
+TYPED_TEST(StorageTest, finishWithoutBeginFails) {
+  EXPECT_DEATH(this->storage->finishWrite(this->user, "nope.bin"), "");
+}
+
+TYPED_TEST(StorageTest, abortWithoutBeginDies) {
+  EXPECT_DEATH(this->storage->abortWrite(this->user, "nope.bin"), "");
+}
+
 #include <rapidcheck/gtest.h>
 
-//Property checked: no matter how i slice a file into ranges, reading by chunking
-//should equal reading the whole file
+// Property checked: no matter how i slice a file into ranges, reading by
+// chunking should equal reading the whole file
 RC_GTEST_TYPED_FIXTURE_PROP(StorageTest, anyPartitionReassemblesToWholeFile,
                             (const std::vector<uint8_t> &bytes)) {
   RC_PRE(!bytes.empty());
@@ -314,8 +399,8 @@ RC_GTEST_TYPED_FIXTURE_PROP(StorageTest, anyPartitionReassemblesToWholeFile,
   this->storage->writeFile(this->user, "prop.bin", contents);
 
   // Generate a random partition: a list of cut points, sorted.
-  auto cutPoints = *rc::gen::container<std::vector<int>>(rc::gen::inRange(
-      0, static_cast<int>(bytes.size())));
+  auto cutPoints = *rc::gen::container<std::vector<int>>(
+      rc::gen::inRange(0, static_cast<int>(bytes.size())));
   std::sort(cutPoints.begin(), cutPoints.end());
   cutPoints.erase(std::unique(cutPoints.begin(), cutPoints.end()),
                   cutPoints.end());

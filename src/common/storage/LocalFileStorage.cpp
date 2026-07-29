@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <memory>
 LocalFileStorage::LocalFileStorage() {
   QDir().mkpath(QCoreApplication::applicationDirPath() + "/storage");
 }
@@ -19,6 +20,20 @@ void LocalFileStorage::setRoot(const QString &path) {
 }
 
 void LocalFileStorage::cleanup(const QString &user) {
+  // beware: do not just delete everyone's saveFiles, might namespace them per
+  // user later(TODO)
+  const QString prefix = user + "/";
+  QList<QString> toAbort;
+  for (auto it = activeSaveFiles.cbegin(); it != activeSaveFiles.cend(); ++it) {
+    if (it.key().startsWith(prefix)) {
+      toAbort.append(it.key());
+    }
+  }
+
+  for (const auto &k : toAbort) {
+    activeSaveFiles[k]->cancelWriting();
+    activeSaveFiles.remove(k);
+  }
   QDir(rootPath(user)).removeRecursively();
 }
 
@@ -106,8 +121,8 @@ std::optional<QByteArray> LocalFileStorage::readRange(const QString &user,
                                                       const QString &path,
                                                       qint64 offset,
                                                       qint64 length) const {
-  //better be explicit than implicit
-  if(length == 0) {
+  // better be explicit than implicit
+  if (length == 0) {
     return QByteArray{};
   }
 
@@ -124,4 +139,64 @@ std::optional<QByteArray> LocalFileStorage::readRange(const QString &user,
   }
   QByteArray data = file.read(length);
   return data;
+}
+
+QString LocalFileStorage::saveKeyFor(const QString &user,
+                                     const QString &path) const {
+  return user + "/" + path;
+}
+
+bool LocalFileStorage::beginWrite(const QString &user, const QString &path,
+                                  qint64, qint64) {
+  const QString key = saveKeyFor(user, path);
+
+  Q_ASSERT_X(!activeSaveFiles.contains(key), "beginWrite",
+             "transfer already in progress for (user,path)");
+
+  const QString finalFilePath = fullPath(user, path);
+  QDir().mkpath(QFileInfo(finalFilePath).absolutePath());
+
+  auto save = std::make_unique<QSaveFile>(finalFilePath);
+  if (!save->open(QIODevice::WriteOnly)) {
+    return false;
+  }
+
+  activeSaveFiles.insert(key, std::move(save));
+  return true;
+}
+
+bool LocalFileStorage::writeRange(const QString &user, const QString &path,
+                                  quint32, qint64 offset,
+                                  const QByteArray &bytes) {
+  auto it = activeSaveFiles.find(saveKeyFor(user, path));
+  Q_ASSERT_X(it != activeSaveFiles.end(), "writeRange",
+             "no active transfer for (user,path)");
+  QSaveFile *save = it->get();
+  if (!save->seek(offset)) {
+    return false;
+  }
+
+  return save->write(bytes) == bytes.size();
+}
+
+bool LocalFileStorage::finishWrite(const QString &user, const QString &path) {
+  const QString key = saveKeyFor(user, path);
+  auto it = activeSaveFiles.find(key);
+  Q_ASSERT_X(it != activeSaveFiles.end(), "finishWrite",
+             "no active transfer for (user,path)");
+
+  const bool ok = it->get()->commit();
+  activeSaveFiles.erase(it);
+  return ok;
+}
+
+bool LocalFileStorage::abortWrite(const QString &user, const QString &path) {
+  const QString key = saveKeyFor(user, path);
+  auto it = activeSaveFiles.find(key);
+  Q_ASSERT_X(it != activeSaveFiles.end(), "abortWrite",
+             "no active transfer for (user,path)");
+
+  it->get()->cancelWriting();
+  activeSaveFiles.erase(it);
+  return true;
 }

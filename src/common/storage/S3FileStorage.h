@@ -1,6 +1,7 @@
 #pragma once
 #include "FileStorage.h"
 #include "miniocpp/client.h"
+#include <QHash>
 #include <memory>
 
 struct S3Config {
@@ -30,7 +31,22 @@ public:
                                       qint64 offset,
                                       qint64 length) const override;
 
+  bool beginWrite(const QString &user, const QString &path, qint64 totalSize,
+                  qint64 chunkSize) override;
+  bool writeRange(const QString &user, const QString &path, quint32 partNumber,
+                  qint64, const QByteArray &bytes) override;
+  bool finishWrite(const QString &user, const QString &path) override;
+
+  bool abortWrite(const QString &user, const QString& path) override;
+
 private:
+  struct MultipartState {
+    std::string uploadId;
+    std::list<minio::s3::Part> parts;
+  };
+
+  QHash<QString, MultipartState> activeMultipartUploads;
+
   std::unique_ptr<minio::s3::Client> client;
   std::string bucket;
   std::string objectKey(const QString &user, const QString &filename) const;

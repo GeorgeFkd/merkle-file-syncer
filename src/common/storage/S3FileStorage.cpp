@@ -1,6 +1,7 @@
 #include "S3FileStorage.h"
 #include <QCryptographicHash>
 #include <QDebug>
+#include <miniocpp/args.h>
 #include <sstream>
 void S3FileStorage::init(const S3Config &config) {
   bucket = config.bucket;
@@ -68,6 +69,27 @@ S3FileStorage::readHashOf(const QString &user, const QString &filename) const {
 }
 
 void S3FileStorage::cleanup(const QString &user) {
+  // abort any in-progress multipart uploads for this user
+  const QString prefix = user + "/";
+  for (auto it = activeMultipartUploads.begin();
+       it != activeMultipartUploads.end();) {
+    if (it.key().startsWith(prefix)) {
+      minio::s3::AbortMultipartUploadArgs args;
+      args.bucket = bucket;
+      // reconstruct object key from the transfer key (user/filename)
+      args.object = it.key().toStdString();
+      args.upload_id = it.value().uploadId;
+      auto resp = client->AbortMultipartUpload(args);
+      if (!resp) {
+        qDebug() << "S3FileStorage::cleanup: abort failed:"
+                 << resp.Error().String().c_str();
+      }
+      it = activeMultipartUploads.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
   auto files = listFiles(user);
   for (const auto &file : files) {
     deleteFile(user, file);
@@ -153,4 +175,106 @@ std::optional<QByteArray> S3FileStorage::readRange(const QString &user,
     return std::nullopt;
   }
   return result;
+}
+
+bool S3FileStorage::beginWrite(const QString &user, const QString &path, qint64,
+                               qint64) {
+  auto key = QString::fromStdString(objectKey(user, path));
+  Q_ASSERT_X(!activeMultipartUploads.contains(key), "beginWrite",
+             "transfer already in progress");
+
+  minio::s3::CreateMultipartUploadArgs args;
+  args.bucket = bucket;
+  args.object = objectKey(user, path);
+
+  auto resp = client->CreateMultipartUpload(args);
+  if (!resp) {
+    qDebug() << "S3FileStorage::beginWrite: create failed: "
+             << resp.Error().String().c_str();
+    return false;
+  }
+
+  MultipartState state;
+  state.uploadId = resp.upload_id;
+  activeMultipartUploads.insert(key, std::move(state));
+  return true;
+}
+
+bool S3FileStorage::writeRange(const QString &user, const QString &path,
+                               quint32 partNumber, qint64,
+                               const QByteArray &bytes) {
+  auto it = activeMultipartUploads.find(
+      QString::fromStdString(objectKey(user, path)));
+  assert(it != activeMultipartUploads.end() &&
+         "should beginWrite before writeRange");
+
+  minio::s3::UploadPartArgs args;
+  args.bucket = bucket;
+  args.object = objectKey(user, path);
+  args.upload_id = it->uploadId;
+  args.part_number = partNumber;
+  args.data =
+      std::string_view(bytes.constData(), static_cast<size_t>(bytes.size()));
+
+  auto resp = client->UploadPart(args);
+  if (!resp) {
+    qDebug() << "writeRange failed to upload part " << partNumber
+             << ", error: " << resp.Error().String().c_str();
+    return false;
+  }
+
+  minio::s3::Part part;
+  part.number = partNumber;
+  part.etag = resp.etag;
+  it->parts.push_back(part);
+  return true;
+}
+
+bool S3FileStorage::finishWrite(const QString &user, const QString &path) {
+  auto key = QString::fromStdString(objectKey(user, path));
+  auto it = activeMultipartUploads.find(key);
+  assert(it != activeMultipartUploads.end() &&
+         "finishWrite should be called on an active multipart upload");
+
+  // parts must be ascending by part number for CompleteMultipartUpload
+  it->parts.sort([](const minio::s3::Part &a, const minio::s3::Part &b) {
+    return a.number < b.number;
+  });
+
+  minio::s3::CompleteMultipartUploadArgs args;
+  args.bucket = bucket;
+  args.object = objectKey(user, path);
+  args.upload_id = it->uploadId;
+  args.parts = it->parts;
+
+  auto resp = client->CompleteMultipartUpload(args);
+  activeMultipartUploads.remove(key);
+  if (!resp) {
+    qDebug() << "Failed to complete multipart upload: "
+             << resp.Error().String().c_str();
+    return false;
+  }
+
+  return true;
+}
+
+bool S3FileStorage::abortWrite(const QString &user, const QString &path) {
+  auto key = QString::fromStdString(objectKey(user, path));
+  auto it = activeMultipartUploads.find(key);
+  assert(it != activeMultipartUploads.end() &&
+         "abortWrite should be called on an existing multipart upload");
+
+  minio::s3::AbortMultipartUploadArgs args;
+  args.bucket = bucket;
+  args.object = objectKey(user, path);
+  args.upload_id = it->uploadId;
+
+  auto resp = client->AbortMultipartUpload(args);
+  activeMultipartUploads.remove(key);
+  if (!resp) {
+    qDebug() << "abort failed: " << resp.Error().String().c_str();
+    return false;
+  }
+
+  return true;
 }
