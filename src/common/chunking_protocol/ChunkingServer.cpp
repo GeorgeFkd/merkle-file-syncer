@@ -66,11 +66,11 @@ void ChunkingServer::handleRequestChunkSizeForDownload(
       clientId, SpecifyChunkSizeDownload{msg.path, chunkSize, totalChunks});
 
   // server drives the download: send the first chunk immediately.
-  sendChunk(clientId, msg.path, 1);
+  sendPart(clientId, msg.path, 1);
 }
 
-void ChunkingServer::sendChunk(const ClientId &clientId, const QString &path,
-                               quint32 partNumber) {
+void ChunkingServer::sendPart(const ClientId &clientId, const QString &path,
+                              quint32 partNumber) {
   Q_ASSERT_X(reader, "sendChunk", "reader not set");
   auto it = downloadStates.find(TransferKey{clientId, path});
   Q_ASSERT_X(it != downloadStates.end(), "sendChunk",
@@ -100,7 +100,8 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   // it->transferProgress.currentPartNumber = msg.partNumber;
   const quint64 offset =
       static_cast<quint64>(msg.partNumber - 1) * it->transferProgress.chunkSize;
-  const bool uploadFinished = it->transferProgress.recordConfirmedPart(msg.partNumber);
+  const bool uploadFinished =
+      it->transferProgress.recordConfirmedPart(msg.partNumber);
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash uploadStates, invalidating this iterator.
 
@@ -133,7 +134,8 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
     return;
   }
 
-  const bool finishedDownload = it->transferProgress.recordConfirmedPart(msg.partNumber);
+  const bool finishedDownload =
+      it->transferProgress.recordConfirmedPart(msg.partNumber);
 
   if (finishedDownload) {
     const QString path = msg.path;
@@ -143,5 +145,5 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
   }
 
   const quint32 nextPart = msg.partNumber + 1;
-  sendChunk(clientId, msg.path, nextPart);
+  sendPart(clientId, msg.path, nextPart);
 }

@@ -34,7 +34,7 @@ protected:
   void SetUp() override {
     runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     rootDir =
-        QDir(QCoreApplication::applicationDirPath() + "/test_storage/" + runId);
+        QDir(QDir::tempPath() + "/test_storage/" + runId);
     QDir().mkpath(rootDir.path());
 
     storage = Tag::makeStorage(rootDir.path());

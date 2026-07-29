@@ -10,9 +10,7 @@
 #include <memory>
 #include <qnamespace.h>
 
-FileClient::FileClient() {
-  fileStorage = std::make_unique<LocalFileStorage>();
-}
+FileClient::FileClient() { fileStorage = std::make_unique<LocalFileStorage>(); }
 
 const NegotiationState *FileClient::getNegotiationState() const {
   return merkleSyncClient.getNegotiationState();
@@ -85,6 +83,8 @@ void FileClient::setupConnections() {
                    });
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::handleNegotiationCompleted);
+  QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
+                   this, &FileClient::negotiationCompleted);
   startTimer();
 }
 

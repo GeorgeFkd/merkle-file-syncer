@@ -8,10 +8,10 @@ set(TEST_COMMON_INCLUDES
     # ${CMAKE_SOURCE_DIR}/src/common
     ${CMAKE_SOURCE_DIR}/rapidcheck/extras/gtest/include)
 
-add_executable(tree_tests main.cpp tree_tests.cpp)
+add_executable(tree_tests tree_tests.cpp)
 target_link_libraries(
   tree_tests
-  PRIVATE GTest::gtest
+  PRIVATE GTest::gtest_main
           rapidcheck
           filesutil
           storage
@@ -42,10 +42,10 @@ set_target_properties(sync_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(sync_tests)
 
 
-add_executable(storage_tests main.cpp storage_tests.cpp)
+add_executable(storage_tests storage_tests.cpp)
 target_link_libraries(
   storage_tests
-  PRIVATE GTest::gtest
+  PRIVATE GTest::gtest_main
           rapidcheck
           storage
           Qt6::Core)
@@ -101,17 +101,3 @@ if(ENABLE_ASAN)
 endif()
 
 gtest_discover_tests(chunking_tests)
-
-# add_executable(chunking_tests main.cpp chunking_tests.cpp)
-# target_link_libraries(chunking_tests PRIVATE 
-#   GTest::gtest
-#   rapidcheck
-#   chunking_client
-#   chunking_server
-#   Qt6::Core
-# )
-# target_include_directories(chunking_tests PRIVATE ${TEST_COMMON_INCLUDES}
-# ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol)
-#
-# set_target_properties(chunking_tests PROPERTIES AUTOMOC ON)
-# gtest_discover_tests(chunking_tests)
