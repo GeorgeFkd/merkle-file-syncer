@@ -174,17 +174,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
         resolveServerHasFileClientDoesnt(entry.path);
         continue;
       }
-
-      // server says this file is deleted — apply locally
-      auto local = fileStorage->readFile(username, entry.path);
-      if (local.has_value()) {
-        fileStorage->deleteFile(username, entry.path);
-        qDebug() << "Applied server tombstone for:" << entry.path;
-      }
-      if (merkleTree) {
-        merkleTree->deleteFile(entry.path.toStdString(), entry.mtime);
-      }
-      database.removeFileMtime(username, entry.path);
+      applyTombstone(entry.path, entry.mtime);
     }
 
     pendingDirectoryRequests--;
@@ -196,16 +186,10 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     return;
   }
 
-  // Apply tombstones — server says these files are deleted
   for (const auto &entry : msg->entries) {
     if (!entry.deleted)
       continue;
-    auto local = fileStorage->readFile(username, entry.path);
-    if (local.has_value()) {
-      fileStorage->deleteFile(username, entry.path);
-      qDebug() << "Applied server tombstone for:" << entry.path;
-    }
-    database.removeFileMtime(username, entry.path);
+    applyTombstone(entry.path, entry.mtime);
   }
   // Build a set of server paths and a lookup for mtimes
   QHash<QString, QDateTime> serverFiles;
@@ -607,14 +591,7 @@ void FileClient::handleNegotiationCompleted(
 
   for (const auto &[path, deletedAt] :
        negotiationState.diffEntries.deletionWinsRight) {
-    // Server tombstoned, client should apply deletion locally
-    if (fileStorage->readFile(username, path).has_value()) {
-      fileStorage->deleteFile(username, path);
-    }
-    database.removeFileMtime(username, path);
-    if (merkleTree) {
-      merkleTree->deleteFile(path.toStdString(), deletedAt);
-    }
+    applyTombstone(path,deletedAt);
     qDebug() << "Applied server tombstone via merkle negotiation:" << path;
   }
 
@@ -623,6 +600,18 @@ void FileClient::handleNegotiationCompleted(
     Q_EMIT outboundFileCommandsReady();
     checkSyncCompletionAndUnlock();
   }
+}
+
+void FileClient::applyTombstone(const QString &path, const QDateTime &mtime) {
+  auto local = fileStorage->readFile(username, path);
+  if (local.has_value()) {
+    fileStorage->deleteFile(username, path);
+    qDebug() << "Applied server tombstone for:" << path;
+  }
+  if (merkleTree) {
+    merkleTree->deleteFile(path.toStdString(), mtime);
+  }
+  database.removeFileMtime(username, path);
 }
 
 void FileClient::merkleTick() {

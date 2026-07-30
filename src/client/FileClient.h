@@ -95,6 +95,7 @@ private:
   void buildMerkleTree(const std::string& rootDir,const QString& username);
   QList<QString> discoverNewFiles();
   QSet<QString> discoverDeletedFiles();
+  void applyTombstone(const QString& path,const QDateTime& mtime);
 
   // --- Outbound command staging ---
   QHash<QString, SyncRequestMessage> commandsToSend;
