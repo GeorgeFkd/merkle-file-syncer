@@ -11,6 +11,10 @@ struct ChunkTransfer {
   QByteArray bytes;
 };
 
+struct CancelTransfer {
+  QString path;
+};
+
 struct ACKChunkReceived {
   QString path;
   quint32 partNumber;

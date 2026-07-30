@@ -136,3 +136,13 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer &msg) {
     Q_EMIT downloadCompleted(msg.filepath);
   }
 }
+
+void ChunkingClient::cancelUpload(const QString& path) {
+  auto it = uploadStates.find(path);
+  assert(it != uploadStates.end() && "Cancel upload needs to have an existing upload");
+
+  uploadStates.remove(path);
+  Q_EMIT cancelTransferSendRequest(CancelTransfer{path});
+  Q_EMIT downloadCancelled(path);
+
+}

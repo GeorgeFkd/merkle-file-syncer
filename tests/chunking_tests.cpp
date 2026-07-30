@@ -237,16 +237,4 @@ RC_GTEST_PROP(ChunkRoundTrip, uploadThenDownloadPreservesBytes, ()) {
   RC_ASSERT(downloadDone);
   RC_ASSERT(clientStore.file(path).size() == original.size());
   RC_ASSERT(clientStore.file(path) == original);
-
-  // // 1) Upload: client source -> server store.
-  // client.startUpload(path);
-  // RC_ASSERT(uploadDone);
-  // RC_ASSERT(serverStore.file(path) == original);
-  //
-  // // 2) Download the same file back: server store -> client store.
-  // //    Cleared first so the comparison is against freshly written bytes.
-  // clientStore.clearFile(path);
-  // client.startDownload(path, static_cast<quint64>(chunkSize));
-  // RC_ASSERT(downloadDone);
-  // RC_ASSERT(clientStore.file(path) == original);
 }

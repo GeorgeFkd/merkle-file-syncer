@@ -28,6 +28,10 @@ public:
   void setMetadataReader(MetadataReader reader);
   void startUpload(const QString &path);
   void startDownload(const QString &path, quint64 desiredChunkSize);
+  void cancelUpload(const QString& path);
+  void cancelDownload(const QString& path);
+
+
   void sendPart(const QString &path, quint32 partNumber);
   qint8 progressPercent(const QString &path);
   void handleAckChunkOfUpload(const ACKChunkReceived &ackMsg);
@@ -39,12 +43,15 @@ Q_SIGNALS:
   void uploadCompleted(QString path);
   void writeRequested(WriteCommand write);
   void downloadCompleted(QString path);
+  void uploadCancelled(QString path);
+  void downloadCancelled(QString path);
   // void partNumberAcked(QString path, quint32 partNumber);
 
   void chunkTransferSendRequest(ChunkTransfer msg);
   void ackChunkReceivedSendRequest(ACKChunkReceived msg);
   void requestChunkSizeForUploadSendRequest(RequestChunkSizeForUpload msg);
   void requestChunkSizeForDownloadSendRequest(RequestChunkSizeForDownload msg);
+  void cancelTransferSendRequest(CancelTransfer msg);
 
 private:
   ChunkReader reader;

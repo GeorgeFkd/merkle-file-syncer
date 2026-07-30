@@ -52,10 +52,14 @@ public:
   void handleChunkReceived(const ClientId &clientId, const ChunkTransfer &msg);
   void handleAckChunkOfDownload(const ClientId &clientId,
                                 const ACKChunkReceived &msg);
+  void handleCancelReceived(const ClientId& clientId, const CancelTransfer& msg);
 
 Q_SIGNALS:
   void uploadCompleted(ClientId clientId, QString path);
   void downloadCompleted(ClientId clientId, QString path);
+  void uploadCancelled(ClientId,QString path);
+  void downloadCancelled(ClientId,QString path);
+
   void chunkToUploadArrived(ServerWriteCommand writeCmd);
   void chunkTransferSendRequest(ClientId clientId, ChunkTransfer msg);
   void ackChunkReceivedSendRequest(ClientId clientId, ACKChunkReceived msg);

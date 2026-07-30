@@ -147,3 +147,22 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
   const quint32 nextPart = msg.partNumber + 1;
   sendPart(clientId, msg.path, nextPart);
 }
+
+void ChunkingServer::handleCancelReceived(const ClientId &clientId,
+                                          const CancelTransfer &msg) {
+  const TransferKey key{clientId, msg.path};
+
+  if (uploadStates.contains(key)) {
+    uploadStates.remove(key);
+    Q_EMIT uploadCancelled(clientId, msg.path);
+    return;
+  }
+
+  if (downloadStates.contains(key)) {
+    downloadStates.remove(key);
+    Q_EMIT downloadCancelled(clientId, msg.path);
+    return;
+  }
+
+  assert(false && "Cancellation was given the wrong clientId,path pair");
+}
