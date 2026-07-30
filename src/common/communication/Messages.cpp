@@ -135,6 +135,18 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return ListResponseMessage::deserialize(obj);
   if (type == "chunk_transfer")
     return ChunkTransferMessage::deserialize(obj);
+  if (type == "ack_chunk")
+    return ACKChunkReceived::deserialize(obj);
+  if (type == "request_chunk_size_upload")
+    return RequestChunkSizeForUpload::deserialize(obj);
+  if (type == "request_chunk_size_download")
+    return RequestChunkSizeForDownload::deserialize(obj);
+  if (type == "specify_chunk_size_upload")
+    return SpecifyChunkSizeUpload::deserialize(obj);
+  if (type == "specify_chunk_size_download")
+    return SpecifyChunkSizeDownload::deserialize(obj);
+  if (type == "cancel_transfer")
+    return CancelTransfer::deserialize(obj);
 
   return nullptr;
 }
@@ -354,4 +366,155 @@ QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
   }
   debug << "]}";
   return debug;
+}
+
+MessageType ChunkTransfer::type() const { return MessageType::ChunkTransfer; }
+QByteArray ChunkTransfer::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["filepath"] = filepath;
+  obj["partNumber"] = static_cast<qint64>(partNumber);
+  obj["chunkSize"] = static_cast<qint64>(chunkSize);
+  obj["bytes"] = QString::fromLatin1(bytes.toBase64());
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<ChunkTransfer>
+ChunkTransfer::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<ChunkTransfer>();
+  msg->token = obj["token"].toString();
+  msg->filepath = obj["filepath"].toString();
+  msg->partNumber = static_cast<quint32>(obj["partNumber"].toInteger());
+  msg->chunkSize = static_cast<quint32>(obj["chunkSize"].toInteger());
+  msg->bytes = QByteArray::fromBase64(obj["bytes"].toString().toLatin1());
+  return msg;
+}
+
+// --- ACKChunkReceived ---
+MessageType ACKChunkReceived::type() const { return MessageType::AckChunk; }
+QByteArray ACKChunkReceived::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  obj["partNumber"] = static_cast<qint64>(partNumber);
+  obj["failureMsg"] = failureMsg;
+  obj["failureType"] = failureType;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<ACKChunkReceived>
+ACKChunkReceived::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<ACKChunkReceived>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  msg->partNumber = static_cast<quint32>(obj["partNumber"].toInteger());
+  msg->failureMsg = obj["failureMsg"].toString();
+  msg->failureType = obj["failureType"].toString();
+  return msg;
+}
+
+// --- RequestChunkSizeForUpload ---
+MessageType RequestChunkSizeForUpload::type() const {
+  return MessageType::RequestChunkSizeUpload;
+}
+QByteArray RequestChunkSizeForUpload::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  obj["fileSize"] = static_cast<qint64>(fileSize);
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<RequestChunkSizeForUpload>
+RequestChunkSizeForUpload::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<RequestChunkSizeForUpload>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  msg->fileSize = static_cast<quint64>(obj["fileSize"].toInteger());
+  return msg;
+}
+
+// --- RequestChunkSizeForDownload ---
+MessageType RequestChunkSizeForDownload::type() const {
+  return MessageType::RequestChunkSizeDownload;
+}
+QByteArray RequestChunkSizeForDownload::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  obj["chunkSizeDesired"] = static_cast<qint64>(chunkSizeDesired);
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<RequestChunkSizeForDownload>
+RequestChunkSizeForDownload::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<RequestChunkSizeForDownload>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  msg->chunkSizeDesired =
+      static_cast<quint64>(obj["chunkSizeDesired"].toInteger());
+  return msg;
+}
+
+// --- SpecifyChunkSizeUpload ---
+MessageType SpecifyChunkSizeUpload::type() const {
+  return MessageType::SpecifyChunkSizeUpload;
+}
+QByteArray SpecifyChunkSizeUpload::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  obj["chunkSize"] = static_cast<qint64>(chunkSize);
+  obj["totalChunks"] = static_cast<qint64>(totalChunks);
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<SpecifyChunkSizeUpload>
+SpecifyChunkSizeUpload::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<SpecifyChunkSizeUpload>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  msg->chunkSize = static_cast<quint64>(obj["chunkSize"].toInteger());
+  msg->totalChunks = static_cast<quint32>(obj["totalChunks"].toInteger());
+  return msg;
+}
+
+// --- SpecifyChunkSizeDownload ---
+MessageType SpecifyChunkSizeDownload::type() const {
+  return MessageType::SpecifyChunkSizeDownload;
+}
+QByteArray SpecifyChunkSizeDownload::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  obj["chunkSize"] = static_cast<qint64>(chunkSize);
+  obj["totalChunks"] = static_cast<qint64>(totalChunks);
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<SpecifyChunkSizeDownload>
+SpecifyChunkSizeDownload::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<SpecifyChunkSizeDownload>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  msg->chunkSize = static_cast<quint64>(obj["chunkSize"].toInteger());
+  msg->totalChunks = static_cast<quint32>(obj["totalChunks"].toInteger());
+  return msg;
+}
+
+// --- CancelTransfer ---
+MessageType CancelTransfer::type() const { return MessageType::CancelTransfer; }
+QByteArray CancelTransfer::serialize() const {
+  QJsonObject obj;
+  obj["type"] = static_cast<int>(type());
+  obj["token"] = token;
+  obj["path"] = path;
+  return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<CancelTransfer>
+CancelTransfer::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<CancelTransfer>();
+  msg->token = obj["token"].toString();
+  msg->path = obj["path"].toString();
+  return msg;
 }
