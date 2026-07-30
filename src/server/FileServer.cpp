@@ -130,10 +130,8 @@ bool FileServer::writeFile(const QString &user, const QString &file,
 
 QString FileServer::getUserFrom(Message *msg) {
   auto username = getUsername(msg->token);
-  if (!username.has_value()) {
-    qDebug() << "No username for token: " << msg->token;
-    return "";
-  }
+  Q_ASSERT_X(username.has_value(), "getUserFrom",
+             "token must resolve to a user for all non-auth handlers");
   return username.value();
 }
 
@@ -145,8 +143,6 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
   response.operationType = FileOperationType::Delete;
 
   auto username = getUserFrom(msg);
-  assert(username != "" &&
-         "Token should always be set so we can fetch username on server");
   qDebug() << "Delete request for user:" << username
            << "at device:" << sessionStore.getDeviceName(msg->token).value();
 
@@ -204,8 +200,6 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   response.operationType = FileOperationType::Write;
 
   auto username = getUserFrom(msg);
-  assert(username != "" &&
-         "Token should always be set so we can fetch username on server");
 
   QDateTime clientMtime = msg->operationTime;
   auto serverTimeIsLatest =
@@ -284,8 +278,6 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
 void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle sync message at server";
   auto username = getUserFrom(msg);
-  assert(username != "" &&
-         "Token should always be set so we can fetch username on server");
 
   auto serverTree = getUserTree(username);
   merkleSyncServer.handleRequest(toProtocolMessage(*msg), serverTree,
@@ -294,8 +286,6 @@ void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
 
 ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
   auto username = getUserFrom(msg);
-  assert(username != "" &&
-         "Token should always be set so we can fetch username on server");
   ListResponseMessage response;
 
   bool clientWantsEverything = msg->directory.isEmpty();
@@ -329,8 +319,6 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
              "fileStorage is not set");
 
   auto username = getUserFrom(msg);
-  assert(username != "" &&
-         "Token should always be set so we can fetch username on server");
 
   auto path = QString::fromStdString(msg->path);
   auto storedMtime = database.readMtime(username, path);
