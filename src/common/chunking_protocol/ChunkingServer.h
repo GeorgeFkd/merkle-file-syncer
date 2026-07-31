@@ -25,6 +25,14 @@ struct ServerWriteCommand {
   quint64 offset;
 };
 
+struct ChunkingServerInMsgCtx {
+  ClientId clientId;
+};
+
+struct ChunkingServerOutMsgCtx {
+  ClientId clientId;
+};
+
 class ChunkingServer : public QObject {
   Q_OBJECT
 public:
@@ -43,34 +51,32 @@ public:
   void setReader(ChunkReader reader);
   void setMetadataReader(MetadataReader reader);
 
+  void onMessage(const Message *msg, ChunkingServerInMsgCtx msgInCtx);
   void handleRequestChunkSizeForUpload(const ClientId &clientId,
-                                       const RequestChunkSizeForUpload &msg);
+                                       const RequestChunkSizeForUpload *msg);
   void
   handleRequestChunkSizeForDownload(const ClientId &clientId,
-                                    const RequestChunkSizeForDownload &msg);
+                                    const RequestChunkSizeForDownload *msg);
 
-  void handleChunkReceived(const ClientId &clientId, const ChunkTransfer &msg);
+  void handleChunkReceived(const ClientId &clientId, const ChunkTransfer *msg);
   void handleAckChunkOfDownload(const ClientId &clientId,
-                                const ACKChunkReceived &msg);
-  void handleCancelReceived(const ClientId& clientId, const CancelTransfer& msg);
+                                const ACKChunkReceived *msg);
+  void handleCancelReceived(const ClientId &clientId,
+                            const CancelTransfer *msg);
 
 Q_SIGNALS:
   void uploadCompleted(ClientId clientId, QString path);
   void downloadCompleted(ClientId clientId, QString path);
-  void uploadCancelled(ClientId,QString path);
-  void downloadCancelled(ClientId,QString path);
+  void uploadCancelled(ClientId, QString path);
+  void downloadCancelled(ClientId, QString path);
 
   void chunkToUploadArrived(ServerWriteCommand writeCmd);
-  void chunkTransferSendRequest(ClientId clientId, ChunkTransfer msg);
-  void ackChunkReceivedSendRequest(ClientId clientId, ACKChunkReceived msg);
-  void specifyChunkSizeUploadSendRequest(ClientId clientId,
-                                         SpecifyChunkSizeUpload msg);
-  void specifyChunkSizeDownloadSendRequest(ClientId clientId,
-                                           SpecifyChunkSizeDownload msg);
+
+  void sendMessage(std::shared_ptr<Message> msg,ChunkingServerOutMsgCtx msgOutCtx);
 
 private:
   void sendPart(const ClientId &clientId, const QString &path,
-                 quint32 partNumber);
+                quint32 partNumber);
   ChunkSizeCalculator chunkSizeCalculator;
   ChunkReader reader;
   MetadataReader metadataReader;

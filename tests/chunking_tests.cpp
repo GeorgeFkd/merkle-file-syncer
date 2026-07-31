@@ -93,66 +93,89 @@ private:
 // All connections are DirectConnection: WriteCommand passes a QByteArray by
 // reference, valid only during synchronous dispatch, so queued delivery would
 // dangle.
+//
+
 void wireClientServer(ChunkingClient &client, ChunkingServer &server,
                       const ClientId &clientId) {
-  // client -> server
+  // client -> server: client sends context-less; inject clientId for the server
   QObject::connect(
-      &client, &ChunkingClient::requestChunkSizeForUploadSendRequest, &server,
-      [&server, clientId](const RequestChunkSizeForUpload &msg) {
-        server.handleRequestChunkSizeForUpload(clientId, msg);
+      &client, &ChunkingClient::sendMessage, &server,
+      [&server, clientId](std::shared_ptr<Message> msg) {
+        server.onMessage(msg.get(), ChunkingServerInMsgCtx{clientId});
       },
       Qt::DirectConnection);
 
+  // server -> client: server sends with clientId; client ignores it
   QObject::connect(
-      &client, &ChunkingClient::requestChunkSizeForDownloadSendRequest, &server,
-      [&server, clientId](const RequestChunkSizeForDownload &msg) {
-        server.handleRequestChunkSizeForDownload(clientId, msg);
-      },
-      Qt::DirectConnection);
-
-  QObject::connect( // upload payload
-      &client, &ChunkingClient::chunkTransferSendRequest, &server,
-      [&server, clientId](const ChunkTransfer &msg) {
-        server.handleChunkReceived(clientId, msg);
-      },
-      Qt::DirectConnection);
-
-  QObject::connect( // download ack
-      &client, &ChunkingClient::ackChunkReceivedSendRequest, &server,
-      [&server, clientId](const ACKChunkReceived &msg) {
-        server.handleAckChunkOfDownload(clientId, msg);
-      },
-      Qt::DirectConnection);
-
-  // server -> client (leading ClientId dropped by each lambda)
-  QObject::connect(
-      &server, &ChunkingServer::specifyChunkSizeUploadSendRequest, &client,
-      [&client](const ClientId &, const SpecifyChunkSizeUpload &msg) {
-        client.handleUploadSizeReceived(msg);
-      },
-      Qt::DirectConnection);
-
-  QObject::connect(
-      &server, &ChunkingServer::specifyChunkSizeDownloadSendRequest, &client,
-      [&client](const ClientId &, const SpecifyChunkSizeDownload &msg) {
-        client.handleDownloadSizeReceived(msg);
-      },
-      Qt::DirectConnection);
-
-  QObject::connect( // download payload
-      &server, &ChunkingServer::chunkTransferSendRequest, &client,
-      [&client](const ClientId &, const ChunkTransfer &msg) {
-        client.handleChunkReceived(msg);
-      },
-      Qt::DirectConnection);
-
-  QObject::connect( // upload ack
-      &server, &ChunkingServer::ackChunkReceivedSendRequest, &client,
-      [&client](const ClientId &, const ACKChunkReceived &msg) {
-        client.handleAckChunkOfUpload(msg);
+      &server, &ChunkingServer::sendMessage, &client,
+      [&client](std::shared_ptr<Message> msg,ChunkingServerOutMsgCtx msgCtx) {
+        client.onMessage(msg.get());
       },
       Qt::DirectConnection);
 }
+
+// void wireClientServer(ChunkingClient &client, ChunkingServer &server,
+//                       const ClientId &clientId) {
+//   // client -> server
+//   QObject::connect(
+//       &client, &ChunkingClient::requestChunkSizeForUploadSendRequest,
+//       &server,
+//       [&server, clientId](const RequestChunkSizeForUpload &msg) {
+//         server.handleRequestChunkSizeForUpload(clientId, &msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect(
+//       &client, &ChunkingClient::requestChunkSizeForDownloadSendRequest,
+//       &server,
+//       [&server, clientId](const RequestChunkSizeForDownload &msg) {
+//         server.handleRequestChunkSizeForDownload(clientId, &msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect( // upload payload
+//       &client, &ChunkingClient::chunkTransferSendRequest, &server,
+//       [&server, clientId](const ChunkTransfer &msg) {
+//         server.handleChunkReceived(clientId, &msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect( // download ack
+//       &client, &ChunkingClient::ackChunkReceivedSendRequest, &server,
+//       [&server, clientId](const ACKChunkReceived &msg) {
+//         server.handleAckChunkOfDownload(clientId, &msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   // server -> client (leading ClientId dropped by each lambda)
+//   QObject::connect(
+//       &server, &ChunkingServer::specifyChunkSizeUploadSendRequest, &client,
+//       [&client](const ClientId &, const SpecifyChunkSizeUpload &msg) {
+//         client.handleUploadSizeReceived(&msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect(
+//       &server, &ChunkingServer::specifyChunkSizeDownloadSendRequest, &client,
+//       [&client](const ClientId &, const SpecifyChunkSizeDownload &msg) {
+//         client.handleDownloadSizeReceived(&msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect( // download payload
+//       &server, &ChunkingServer::chunkTransferSendRequest, &client,
+//       [&client](const ClientId &, const ChunkTransfer &msg) {
+//         client.handleChunkReceived(&msg);
+//       },
+//       Qt::DirectConnection);
+//
+//   QObject::connect( // upload ack
+//       &server, &ChunkingServer::ackChunkReceivedSendRequest, &client,
+//       [&client](const ClientId &, const ACKChunkReceived &msg) {
+//         client.handleAckChunkOfUpload(&msg);
+//       },
+//       Qt::DirectConnection);
+// }
 
 } // namespace
 

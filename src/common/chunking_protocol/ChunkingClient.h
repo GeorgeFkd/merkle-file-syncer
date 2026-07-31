@@ -8,12 +8,12 @@ struct ClientUploadState {
   TransferProgress transferProgress;
 };
 struct ClientDownloadState {
-   TransferProgress transferProgress;
+  TransferProgress transferProgress;
 };
 struct WriteCommand {
   QString path;
   quint64 offset;
-  //this is CoW so on assignment it just increments a ref-count
+  // this is CoW so on assignment it just increments a ref-count
   QByteArray bytes;
 };
 
@@ -28,16 +28,16 @@ public:
   void setMetadataReader(MetadataReader reader);
   void startUpload(const QString &path);
   void startDownload(const QString &path, quint64 desiredChunkSize);
-  void cancelUpload(const QString& path);
-  void cancelDownload(const QString& path);
+  void cancelUpload(const QString &path);
+  void cancelDownload(const QString &path);
 
+  void onMessage(const Message *msg);
 
-  void sendPart(const QString &path, quint32 partNumber);
   qint8 progressPercent(const QString &path);
-  void handleAckChunkOfUpload(const ACKChunkReceived &ackMsg);
-  void handleUploadSizeReceived(const SpecifyChunkSizeUpload &msg);
-  void handleDownloadSizeReceived(const SpecifyChunkSizeDownload &msg);
-  void handleChunkReceived(const ChunkTransfer &msg);
+  void handleAckChunkOfUpload(const ACKChunkReceived *ackMsg);
+  void handleUploadSizeReceived(const SpecifyChunkSizeUpload *msg);
+  void handleDownloadSizeReceived(const SpecifyChunkSizeDownload *msg);
+  void handleChunkReceived(const ChunkTransfer *msg);
 
 Q_SIGNALS:
   void uploadCompleted(QString path);
@@ -47,13 +47,10 @@ Q_SIGNALS:
   void downloadCancelled(QString path);
   // void partNumberAcked(QString path, quint32 partNumber);
 
-  void chunkTransferSendRequest(ChunkTransfer msg);
-  void ackChunkReceivedSendRequest(ACKChunkReceived msg);
-  void requestChunkSizeForUploadSendRequest(RequestChunkSizeForUpload msg);
-  void requestChunkSizeForDownloadSendRequest(RequestChunkSizeForDownload msg);
-  void cancelTransferSendRequest(CancelTransfer msg);
+  void sendMessage(std::shared_ptr<Message> msg);
 
 private:
+  void sendPart(const QString &path, quint32 partNumber);
   ChunkReader reader;
   MetadataReader metadataReader;
   QHash<QString, ClientUploadState> uploadStates;
