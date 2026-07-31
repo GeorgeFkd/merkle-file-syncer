@@ -5,9 +5,9 @@ class MerkleTree : public FileTree {
 public:
   explicit MerkleTree(const QString& rootNodeName);
   void debug() const override;
-  bool addFile(const std::string& relativePath,const QDateTime& mtime,const QByteArray& hash);
+  bool addFile(const QString& relativePath,const QDateTime& mtime,const QByteArray& hash);
   bool deleteFile(
-      const std::string &relativePath,
+      const QString& relativePath,
       const QDateTime &deletedAt = QDateTime::currentDateTime()) override;
   FileNode *getRoot() const override;
   QByteArray rootHash() const;

@@ -36,18 +36,16 @@ public:
   FileTree &operator=(FileTree &&) = default;
   // virtual ~FileTree() = default;
   virtual bool
-  deleteFile(const std::string &relativePath,
+  deleteFile(const QString& relativePath,
              const QDateTime &deletedAt = QDateTime::currentDateTime()) = 0;
   int fileCount() const;
   virtual void debug() const = 0;
   virtual FileNode *getRoot() const = 0;
   std::optional<std::tuple<FileNode *, bool>>
-  find(const std::string &relativePath) const;
+  find(const QString& relativePath) const;
 
 protected:
   void markTombstoneRecursively(FileNode *node, const QDateTime &deletedAt);
-  std::optional<FileNode *> findNode(const std::string &relativePath,
-                                     FileNode *root) const;
   int countFileNodes(FileNode *node) const;
   void collectAllFiles(const FileNode *node, const QString &path,
                        QList<QString> &files) const;

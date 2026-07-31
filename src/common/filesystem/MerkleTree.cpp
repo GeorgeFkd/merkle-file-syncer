@@ -80,7 +80,7 @@ void MerkleTree::collectHashesAtDepth(
 
 QList<QPair<QString, QByteArray>>
 MerkleTree::getChildHashes(const QString &path) const {
-  auto found = find(path.toStdString());
+  auto found = find(path);
   if (!found.has_value())
     return {};
   auto &[node, isTombstoned] = *found;
@@ -120,14 +120,14 @@ QByteArray MerkleTree::hashChildren(const FileNode *node) const {
   return dirHash.result();
 }
 
-bool MerkleTree::deleteFile(const std::string &relativePath,
+bool MerkleTree::deleteFile(const QString& relativePath,
                             const QDateTime &deletedAt) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::deleteFile", "root is null");
-  Q_ASSERT_X(!relativePath.empty(), "MerkleTree::deleteFile",
+  Q_ASSERT_X(!relativePath.isEmpty(), "MerkleTree::deleteFile",
              "relativePath is empty");
 
   auto parts =
-      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+      relativePath.split('/', Qt::SkipEmptyParts);
   FileNode *current = root.get();
 
   for (int i = 0; i < parts.size() - 1; i++) {
@@ -140,7 +140,7 @@ bool MerkleTree::deleteFile(const std::string &relativePath,
       }
     }
     if (!found) {
-      qDebug() << "Path not found:" << QString::fromStdString(relativePath);
+      qDebug() << "Path not found:" << relativePath;
       return false;
     }
     current = found;
@@ -154,7 +154,7 @@ bool MerkleTree::deleteFile(const std::string &relativePath,
                          });
 
   if (it == current->children.end()) {
-    qDebug() << "File not found:" << QString::fromStdString(relativePath);
+    qDebug() << "File not found:" << relativePath;
     return false;
   }
 
@@ -180,15 +180,15 @@ void MerkleTree::debugNode(const FileNode *node, int depth) const {
     debugNode(child.get(), depth + 1);
 }
 
-bool MerkleTree::addFile(const std::string &relativePath,
-                         const QDateTime &mtime, const QByteArray &hash) {
+bool MerkleTree::addFile(const QString &relativePath, const QDateTime &mtime,
+                         const QByteArray &hash) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::addFile",
              "root is null — tree not built");
-  Q_ASSERT_X(!relativePath.empty(), "MerkleTree::addFile",
+  Q_ASSERT_X(!relativePath.isEmpty(), "MerkleTree::addFile",
              "relativePath is empty");
 
   auto parts =
-      QString::fromStdString(relativePath).split('/', Qt::SkipEmptyParts);
+      relativePath.split('/', Qt::SkipEmptyParts);
   FileNode *current = root.get();
   for (int i = 0; i < parts.size(); i++) {
     const auto &part = parts[i];

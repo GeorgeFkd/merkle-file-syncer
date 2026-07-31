@@ -27,7 +27,7 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
 
   for (const auto &[parentPath, fileEntries] : msg.fileEntriesPerChild) {
     QList<QPair<QString, QByteArray>> clientHashesOfNode;
-    auto parent = tree->find(parentPath.toStdString());
+    auto parent = tree->find(parentPath);
     assert(parent.has_value());
     clientHashesOfNode = tree->getChildHashes(parentPath);
 
@@ -43,7 +43,7 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
 
     auto addFilesFromClientInNegotiation = [&](const QList<QString> &paths) {
       for (const auto &entry : paths) {
-        auto foundNode = tree->find(entry.toStdString());
+        auto foundNode = tree->find(entry);
         assert(foundNode.has_value());
         auto &[node, isTombstoned] = *foundNode;
         if (isTombstoned) {
@@ -73,7 +73,7 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
 
     auto addModifiedFromNegotiation = [&](const QList<QString> &paths) {
       for (const auto &entry : paths) {
-        auto foundNode = tree->find(entry.toStdString());
+        auto foundNode = tree->find(entry);
         assert(foundNode.has_value());
         auto &[node, clientHasTombstone] = *foundNode;
         auto it = serverByPath.constFind(entry);

@@ -124,7 +124,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     return false;
   }
   database.updateFileMtime(user, file, mtime);
-  getUserTree(user)->addFile(file.toStdString(), mtime, hashContents(contents));
+  getUserTree(user)->addFile(file, mtime, hashContents(contents));
   return true;
 }
 
@@ -169,7 +169,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
 
   QDateTime clientDeletedAt = msg->operationTime;
   database.markDeleted(username, path, clientDeletedAt);
-  getUserTree(username)->deleteFile(msg->path, clientDeletedAt);
+  getUserTree(username)->deleteFile(QString::fromStdString(msg->path), clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -219,7 +219,7 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
     return response;
   }
 
-  getUserTree(username)->addFile(path.toStdString(), clientMtime,
+  getUserTree(username)->addFile(path, clientMtime,
                                  hashContents(msg->contents));
   database.updateFileMtime(username, path, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
@@ -249,7 +249,7 @@ FileServer::buildMerkleTree(const QString &username) {
       continue;
     }
 
-    tree->addFile(path.toStdString(), mtime.value(),
+    tree->addFile(path, mtime.value(),
                   hashContents(contents.value()));
   }
 
@@ -257,7 +257,7 @@ FileServer::buildMerkleTree(const QString &username) {
   auto tombstones = database.allTombstones(username);
   QString prefix = username + "/";
   for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-    tree->deleteFile(it.key().toStdString(), it.value());
+    tree->deleteFile(it.key(), it.value());
   }
 
   assert(tree->verifyHashes());

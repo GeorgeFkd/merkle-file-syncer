@@ -11,7 +11,7 @@ void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
   auto toEntries = [tree](const QList<QPair<QString, QByteArray>> &pathHashes) {
     QList<MerkleEntry> entries;
     for (const auto &[path, hash] : pathHashes) {
-      auto found = tree->find(path.toStdString());
+      auto found = tree->find(path);
       if (!found.has_value())
         continue;
       auto &[node, isTombstoned] = *found;
@@ -45,7 +45,7 @@ void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
   response.phase = 1;
   response.depth = msg.depth;
   for (const auto &[parentPath, _] : msg.fileEntriesPerChild) {
-    auto found = tree->find(parentPath.toStdString());
+    auto found = tree->find(parentPath);
     assert(found.has_value());
     auto &[node, isTombstoned] = *found;
     assert(node->type == FileType::Directory);

@@ -28,7 +28,7 @@ void FileClient::buildMerkleTree(const std::string &rootDir,
     auto mtime = fileStorage->getMtime(username, path);
     if (!mtime.has_value())
       continue;
-    merkleTree->addFile(path.toStdString(), mtime.value(),
+    merkleTree->addFile(path, mtime.value(),
                         hashContents(contents.value()));
   }
   assert(merkleTree->verifyHashes());
@@ -348,7 +348,7 @@ QList<QString> FileClient::discoverNewFilesAndUpdateMtimes() {
     if (merkleTree) {
       auto contents = fileStorage->readFile(username, relativePath);
       if (contents.has_value()) {
-        merkleTree->addFile(relativePath.toStdString(), localFileMtime.value(),
+        merkleTree->addFile(relativePath, localFileMtime.value(),
                             hashContents(contents.value()));
       }
     }
@@ -395,7 +395,7 @@ void FileClient::stageConflictResolution(const QString &path) {
 }
 
 void FileClient::resolveServerHasFileClientDoesnt(const QString &path) {
-  auto found = merkleTree->find(path.toStdString());
+  auto found = merkleTree->find(path);
   bool clientHasLiveNode = found.has_value() && !std::get<1>(*found);
   if (database.readMtime(username, path).has_value() && !clientHasLiveNode) {
     stageDeleteFor(path, QDateTime::currentDateTime());
@@ -473,7 +473,7 @@ std::optional<QDateTime> FileClient::writeFile(const QString &user,
 
   // we should not update the database, let the client discover it.
   if (merkleTree) {
-    merkleTree->addFile(path.toStdString(), mtime.value(),
+    merkleTree->addFile(path, mtime.value(),
                         hashContents(contents));
   }
   return mtime.value();
@@ -495,7 +495,7 @@ std::optional<QDateTime> FileClient::deleteFile(const QString &user,
   }
   QDateTime deletedAt = QDateTime::currentDateTime();
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString(), deletedAt);
+    merkleTree->deleteFile(path, deletedAt);
   }
 
   return deletedAt;
@@ -537,7 +537,7 @@ void FileClient::stageDeleteFor(const QString &path,
   msg.operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString(), deletedAt);
+    merkleTree->deleteFile(path, deletedAt);
   }
 }
 
@@ -585,7 +585,7 @@ void FileClient::handleNegotiationCompleted(
     // modified should only contain files at this point — directories
     // were resolved during negotiation via directoriesToCheckWithServer
     {
-      auto found = merkleTree->find(path.toStdString());
+      auto found = merkleTree->find(path);
       assert(found.has_value());
       auto &[node, isTombstoned] = *found;
       assert(node->type == FileType::File);
@@ -620,7 +620,7 @@ void FileClient::applyTombstone(const QString &path, const QDateTime &mtime) {
     qDebug() << "Applied server tombstone for:" << path;
   }
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString(), mtime);
+    merkleTree->deleteFile(path, mtime);
   }
   database.removeFileMtime(username, path);
   
