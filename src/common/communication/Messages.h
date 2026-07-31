@@ -92,7 +92,7 @@ enum class FileOperationStatus { DoIt, Error, ServerHasNewer, Done, Pending };
 
 class SyncRequestMessage : public Message {
 public:
-  std::string path;
+  QString path;
   QByteArray contents;
   QDateTime operationTime;
   FileOperationType operationType;

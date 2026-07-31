@@ -159,7 +159,7 @@ QByteArray SyncRequestMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "sync_request";
   obj["token"] = token;
-  obj["path"] = QString::fromStdString(path);
+  obj["path"] = path;
   obj["contents"] = QString::fromUtf8(contents.toBase64());
   obj["mtime"] = operationTime.toString(Qt::ISODateWithMs);
   switch (operationStatus) {
@@ -213,7 +213,7 @@ std::unique_ptr<SyncRequestMessage>
 SyncRequestMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<SyncRequestMessage>();
   msg->token = obj["token"].toString();
-  msg->path = obj["path"].toString().toStdString();
+  msg->path = obj["path"].toString();
   msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
   msg->operationTime =
       QDateTime::fromString(obj["mtime"].toString(), Qt::ISODateWithMs);

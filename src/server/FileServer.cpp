@@ -157,11 +157,11 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
   if (serverMtime > clientMtime) {
     assert(false); // this path is not exercised at all we never send deletes it rejects, probs should write a test.
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
-    return trySendNewerFile(username, QString::fromStdString(msg->path),
+    return trySendNewerFile(username, msg->path,
                             serverMtime, FileOperationType::Delete);
   }
 
-  if (!fileStorage->deleteFile(username, QString::fromStdString(msg->path))) {
+  if (!fileStorage->deleteFile(username, msg->path)) {
     qDebug() << "handleDeleteRequest: failed to delete file from storage";
     response.operationStatus = FileOperationStatus::Error;
     return response;
@@ -169,7 +169,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
 
   QDateTime clientDeletedAt = msg->operationTime;
   database.markDeleted(username, path, clientDeletedAt);
-  getUserTree(username)->deleteFile(QString::fromStdString(msg->path), clientDeletedAt);
+  getUserTree(username)->deleteFile(msg->path, clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -179,7 +179,7 @@ SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
                                                 const QDateTime &serverMtime,
                                                 FileOperationType origOp) {
   SyncRequestMessage response;
-  response.path = path.toStdString();
+  response.path = path;
   response.operationType = origOp;
   auto contents = fileStorage->readFile(username, path);
   if (!contents.has_value()) {
@@ -208,11 +208,11 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   if (serverTimeIsLatest) {
     //this path is still taken, so we are sending to the server writes that it rejects
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
-    return trySendNewerFile(username, QString::fromStdString(msg->path),
+    return trySendNewerFile(username, msg->path,
                             storedMtime.value(), FileOperationType::Write);
   }
 
-  if (!fileStorage->writeFile(username, QString::fromStdString(msg->path),
+  if (!fileStorage->writeFile(username,msg->path,
                               msg->contents)) {
     qDebug() << "handleWriteRequest: failed to write file to storage";
     response.operationStatus = FileOperationStatus::Error;
@@ -322,13 +322,12 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
 
   auto username = getUserFrom(msg);
 
-  auto path = QString::fromStdString(msg->path);
-  auto storedMtime = database.readMtime(username, path);
+  auto storedMtime = database.readMtime(username, msg->path);
 
   if (msg->operationType == FileOperationType::Delete) {
-    return handleDeleteRequest(msg, path, storedMtime);
+    return handleDeleteRequest(msg, msg->path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
-    return handleWriteRequest(msg, path, storedMtime);
+    return handleWriteRequest(msg, msg->path, storedMtime);
   }
   assert(false);
 }

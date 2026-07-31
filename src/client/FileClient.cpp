@@ -267,46 +267,45 @@ void FileClient::checkSyncCompletionAndUnlock() {
 }
 
 void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
-  QString path = QString::fromStdString(msg->path);
+  
   switch (msg->operationStatus) {
   case FileOperationStatus::Done: {
-    qDebug() << "Write acked for:" << path;
-    auto localMtime = fileStorage->getMtime(username, path);
+    qDebug() << "Write acked for:" << msg->path;
+    auto localMtime = fileStorage->getMtime(username, msg->path);
     if (localMtime.has_value()) {
-      database.updateFileMtime(username, path, localMtime.value());
+      database.updateFileMtime(username, msg->path, localMtime.value());
     } else {
-      qDebug() << "handleWriteResponse: no local mtime after write for" << path;
+      qDebug() << "handleWriteResponse: no local mtime after write for" << msg->path;
     }
     break;
   }
   case FileOperationStatus::ServerHasNewer: {
-    qDebug() << "Server has newer version of:" << path;
-    applyServerVersion(path, msg->contents);
+    qDebug() << "Server has newer version of:" << msg->path;
+    applyServerVersion(msg->path, msg->contents);
     break;
   }
   default: {
-    qDebug() << "handleWriteResponse: unhandled status for" << path;
+    qDebug() << "handleWriteResponse: unhandled status for" << msg->path;
     break;
   }
   }
 }
 
 void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
-  QString path = QString::fromStdString(msg->path);
   switch (msg->operationStatus) {
   case FileOperationStatus::Done: {
-    qDebug() << "Delete acked for:" << path;
-    database.removeFileMtime(username, path);
+    qDebug() << "Delete acked for:" << msg->path;
+    database.removeFileMtime(username, msg->path);
     break;
   }
   case FileOperationStatus::ServerHasNewer: {
-    qDebug() << "Server rejected deletion, restoring:" << path;
+    qDebug() << "Server rejected deletion, restoring:" << msg->path;
       // assert(false);
-    applyServerVersion(path, msg->contents);
+    applyServerVersion(msg->path, msg->contents);
     break;
   }
   default: {
-    qDebug() << "handleDeleteResponse: unhandled status for" << path;
+    qDebug() << "handleDeleteResponse: unhandled status for" << msg->path;
     break;
   }
   }
@@ -530,7 +529,7 @@ void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
   SyncRequestMessage msg;
   msg.token = token;
-  msg.path = path.toStdString();
+  msg.path = path;
   msg.contents = {};
   msg.operationTime = deletedAt;
   msg.operationType = FileOperationType::Delete;
@@ -547,7 +546,7 @@ FileClient::buildSyncRequest(const QString &path, FileOperationType op,
                              const std::optional<QDateTime> &mtime) {
   SyncRequestMessage msg;
   msg.token = token;
-  msg.path = path.toStdString();
+  msg.path = path;
   msg.contents = contents;
   msg.operationTime = mtime.has_value() ? mtime.value() : QDateTime();
   msg.operationType = op;
