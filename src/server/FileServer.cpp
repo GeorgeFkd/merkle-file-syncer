@@ -155,6 +155,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
   QDateTime clientMtime = msg->operationTime;
   QDateTime serverMtime = storedMtime.value();
   if (serverMtime > clientMtime) {
+    assert(false); // this path is not exercised at all we never send deletes it rejects, probs should write a test.
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
     return trySendNewerFile(username, QString::fromStdString(msg->path),
                             serverMtime, FileOperationType::Delete);
@@ -205,6 +206,7 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   auto serverTimeIsLatest =
       storedMtime.has_value() && (storedMtime.value() > clientMtime);
   if (serverTimeIsLatest) {
+    //this path is still taken, so we are sending to the server writes that it rejects
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
     return trySendNewerFile(username, QString::fromStdString(msg->path),
                             storedMtime.value(), FileOperationType::Write);

@@ -673,3 +673,26 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerWinsForAllDevices) {
     ASSERT_EQ(contents.value(), QByteArray("server version"));
   }
 }
+
+TYPED_TEST(MultiDeviceSyncTest,serverNewerRejectsClientDelete) {
+  GTEST_SKIP_("Not yet fixed");
+  this->deviceA->writeFile(this->username,"test.txt","original");
+  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(*this->deviceB);
+
+  this->addMinimumDelayForTimestampOrdering();
+
+  this->deviceB->writeFile(this->username,"test.txt","B's newer version");
+  this->tickAndWait(*this->deviceA);
+
+  this->deviceA->deleteFile(this->username,"test.txt");
+  this->tickAndWait(*this->deviceA);
+
+  auto serverContents = this->fileServer.getStorage()->readFile(this->username,"test.txt");
+  ASSERT_TRUE(serverContents.has_value());
+  ASSERT_EQ(serverContents.value(),QByteArray("B's newer version"));
+
+  auto aContents = this->deviceA->getStorage()->readFile(this->username,"test.txt");
+  ASSERT_TRUE(aContents.has_value());
+  ASSERT_EQ(aContents.value(),QByteArray("B's newer version"));
+}

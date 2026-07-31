@@ -50,7 +50,7 @@ public:
 
 Q_SIGNALS:
   void syncCompleted();
-  void negotiationCompleted();
+  void negotiationCompleted(const NegotiationState&);
   void authenticated();
   void outboundFileCommandsReady();
 
@@ -93,7 +93,7 @@ private:
   std::unique_ptr<MerkleTree> merkleTree;
   QByteArray hashContents(const QByteArray& contents);
   void buildMerkleTree(const std::string& rootDir,const QString& username);
-  QList<QString> discoverNewFiles();
+  QList<QString> discoverNewFilesAndUpdateMtimes();
   QSet<QString> discoverDeletedFiles();
   void applyTombstone(const QString& path,const QDateTime& mtime);
 
@@ -119,6 +119,8 @@ private:
   int pendingDirectoryRequests = 0;
   void requestDirectoryList(const QString &dirPath);
   void handleListResponse(ListResponseMessage *msg);
+  void handleMerkleDirectoryListing(ListResponseMessage *msg);
+  void handleNaiveListing(ListResponseMessage *msg);
 
   // --- Merkle negotiation ---
   bool currentlyNegotiatingFileDiffs = false;

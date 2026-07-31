@@ -83,6 +83,8 @@ void FileClient::setupConnections() {
                    });
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::handleNegotiationCompleted);
+  QObject::connect(this, &FileClient::negotiationCompleted, this,
+                   &FileClient::handleNegotiationCompleted);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::negotiationCompleted);
   startTimer();
@@ -162,82 +164,77 @@ void FileClient::dispatch(Message *msg) {
 
 FileClient::~FileClient() {}
 
+void FileClient::handleMerkleDirectoryListing(ListResponseMessage *msg) {
+  for (const auto &entry : msg->entries) {
+    if (!entry.deleted) {
+      qDebug() << "Hello";
+      resolveServerHasFileClientDoesnt(entry.path);
+      continue;
+    }
+    applyTombstone(entry.path, entry.mtime);
+  }
+
+  pendingDirectoryRequests--;
+  if (pendingDirectoryRequests == 0) {
+    inMerkleApply = false;
+    Q_EMIT outboundFileCommandsReady();
+    checkSyncCompletionAndUnlock();
+  }
+  return;
+}
+
+void FileClient::handleNaiveListing(ListResponseMessage *msg) {
+  NegotiationState state;
+
+  QSet<QString> serverPaths;
+  for (const auto &entry : msg->entries) {
+    if (entry.deleted) {
+      applyTombstone(entry.path, entry.mtime);
+    } else {
+      serverPaths.insert(entry.path);
+    }
+  }
+
+  // local-only and locally-deleted,mtimes should be updated before using the
+  // db.
+  for (const auto &p : discoverNewFilesAndUpdateMtimes()) {
+    if (!serverPaths.contains(p)) {
+      state.diffEntries.onlyInLeft.append({true, p});
+    }
+  }
+  for (const auto &p : discoverDeletedFiles()) {
+    state.diffEntries.deletionWinsLeft.append(
+        {p, QDateTime::currentDateTime()});
+  }
+  // server files -> onlyInRight / modified
+  for (const auto &entry : msg->entries) {
+    if (entry.deleted)
+      continue;
+    auto localMtime = database.readMtime(username, entry.path);
+    if (!localMtime.has_value()) {
+      state.diffEntries.onlyInRight.append({true, entry.path});
+    } else if (entry.mtime > localMtime.value()) {
+      state.diffEntries.modified.append(entry.path);
+    } else if (localMtime.value() > entry.mtime) {
+      qDebug() << "CLIENT NEWER, staging upload:" << entry.path
+               << "local:" << localMtime.value() << "server:" << entry.mtime;
+      state.diffEntries.onlyInLeft.append({true, entry.path});
+    }
+  }
+
+  Q_EMIT negotiationCompleted(state);
+}
+
 void FileClient::handleListResponse(ListResponseMessage *msg) {
   awaitingListResponse = false;
   qDebug() << "Handling list response from server with" << msg->entries.size()
            << "entries";
 
   if (inMerkleApply) {
-    for (const auto &entry : msg->entries) {
-      if (!entry.deleted) {
-        qDebug() << "Hello";
-        resolveServerHasFileClientDoesnt(entry.path);
-        continue;
-      }
-      applyTombstone(entry.path, entry.mtime);
-    }
-
-    pendingDirectoryRequests--;
-    if (pendingDirectoryRequests == 0) {
-      inMerkleApply = false;
-      Q_EMIT outboundFileCommandsReady();
-      checkSyncCompletionAndUnlock();
-    }
+    handleMerkleDirectoryListing(msg);
     return;
   }
-
-  for (const auto &entry : msg->entries) {
-    if (!entry.deleted)
-      continue;
-    applyTombstone(entry.path, entry.mtime);
-  }
-  // Build a set of server paths and a lookup for mtimes
-  QHash<QString, QDateTime> serverFiles;
-  for (const auto &entry : msg->entries) {
-    if (entry.deleted)
-      continue;
-    serverFiles.insert(entry.path, entry.mtime);
-  }
-
-  // Find server-only and server-newer files -> request download
-  for (auto it = serverFiles.cbegin(); it != serverFiles.cend(); ++it) {
-    const QString &path = it.key();
-    const QDateTime &serverMtime = it.value();
-
-    auto localMtime = database.readMtime(username, path);
-    bool needsDownload = false;
-
-    if (!localMtime.has_value()) {
-      // server has it, we don't know about it
-      needsDownload = true;
-    } else if (serverMtime > localMtime.value()) {
-      // server is newer
-      needsDownload = true;
-    }
-
-    if (needsDownload) {
-      qDebug() << "Requesting download of:" << path;
-      SyncRequestMessage req;
-      req.token = token;
-      req.path = path.toStdString();
-      req.contents = {};
-      req.operationTime =
-          localMtime.has_value() ? localMtime.value() : QDateTime();
-      req.operationType = FileOperationType::Write;
-      req.operationStatus = FileOperationStatus::DoIt;
-      commandsToSend.insert(path, req);
-    }
-  }
-
-  // Run existing local discovery for uploads and deletes
-  auto newFiles = discoverNewFiles();
-  auto deletedFiles = discoverDeletedFiles();
-  stageNewFilesForSending(newFiles);
-  stageDeletedFilesForSending(deletedFiles);
-
-  // Send everything
-  Q_EMIT outboundFileCommandsReady();
-  checkSyncCompletionAndUnlock();
+  handleNaiveListing(msg);
 }
 
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
@@ -304,6 +301,7 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   }
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server rejected deletion, restoring:" << path;
+      // assert(false);
     applyServerVersion(path, msg->contents);
     break;
   }
@@ -332,11 +330,7 @@ void FileClient::applyServerVersion(const QString &path,
   }
 }
 
-QList<QString> FileClient::discoverNewFiles() {
-  if (syncStrategy != SyncStrategy::Naive) {
-    // TODO: Merkle Tree discover new files
-    return {};
-  }
+QList<QString> FileClient::discoverNewFilesAndUpdateMtimes() {
   QList<QString> newFiles;
   auto files = fileStorage->listFiles(username);
   for (const auto &relativePath : files) {
@@ -351,16 +345,19 @@ QList<QString> FileClient::discoverNewFiles() {
     database.updateFileMtime(username, relativePath, localFileMtime.value());
     qDebug() << "Discovered new/modified file:" << relativePath
              << "mtime:" << localFileMtime.value();
+    if (merkleTree) {
+      auto contents = fileStorage->readFile(username, relativePath);
+      if (contents.has_value()) {
+        merkleTree->addFile(relativePath.toStdString(), localFileMtime.value(),
+                            hashContents(contents.value()));
+      }
+    }
     newFiles.append(relativePath);
   }
   return newFiles;
 }
 
 QSet<QString> FileClient::discoverDeletedFiles() {
-  if (syncStrategy != SyncStrategy::Naive) {
-    // TODO: Merkle Tree path
-    return {};
-  }
   auto tracked = database.allTrackedFiles(username);
   auto fileList = fileStorage->listFiles(username);
   QSet<QString> current(fileList.begin(), fileList.end());
@@ -450,6 +447,18 @@ void FileClient::naiveTick() {
   transport->send(req);
 }
 
+void FileClient::merkleTick() {
+  qDebug() << "Merkle tick";
+  if (currentlyNegotiatingFileDiffs) {
+    qDebug() << "There is an existing negotiation going on";
+    return;
+  }
+  currentlyNegotiatingFileDiffs = true;
+  discoverNewFilesAndUpdateMtimes();
+  // TODO: ensure that deletes are actually discoverd
+  merkleSyncClient.startNegotiation(merkleTree.get());
+}
+
 std::optional<QDateTime> FileClient::writeFile(const QString &user,
                                                const QString &path,
                                                const QByteArray &contents) {
@@ -486,7 +495,7 @@ std::optional<QDateTime> FileClient::deleteFile(const QString &user,
   }
   QDateTime deletedAt = QDateTime::currentDateTime();
   if (merkleTree) {
-    merkleTree->deleteFile(path.toStdString(), QDateTime::currentDateTime());
+    merkleTree->deleteFile(path.toStdString(), deletedAt);
   }
 
   return deletedAt;
@@ -519,7 +528,6 @@ void FileClient::requestDirectoryList(const QString &dirPath) {
 
 void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
-  auto mtime = database.readMtime(username, path);
   SyncRequestMessage msg;
   msg.token = token;
   msg.path = path.toStdString();
@@ -528,6 +536,9 @@ void FileClient::stageDeleteFor(const QString &path,
   msg.operationType = FileOperationType::Delete;
   msg.operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
+  if (merkleTree) {
+    merkleTree->deleteFile(path.toStdString(), deletedAt);
+  }
 }
 
 SyncRequestMessage
@@ -591,7 +602,7 @@ void FileClient::handleNegotiationCompleted(
 
   for (const auto &[path, deletedAt] :
        negotiationState.diffEntries.deletionWinsRight) {
-    applyTombstone(path,deletedAt);
+    applyTombstone(path, deletedAt);
     qDebug() << "Applied server tombstone via merkle negotiation:" << path;
   }
 
@@ -612,24 +623,7 @@ void FileClient::applyTombstone(const QString &path, const QDateTime &mtime) {
     merkleTree->deleteFile(path.toStdString(), mtime);
   }
   database.removeFileMtime(username, path);
-}
-
-void FileClient::merkleTick() {
-  qDebug() << "Merkle tick";
-  if (currentlyNegotiatingFileDiffs) {
-    qDebug() << "There is an existing negotiation going on";
-    return;
-  }
-  currentlyNegotiatingFileDiffs = true;
-  merkleSyncClient.startNegotiation(merkleTree.get());
-  // negotiationState = NegotiationState{};
-  // MerkleSyncMessage msg;
-  // msg.token = token;
-  // msg.phase = 0;
-  // msg.rootHash = merkleTree->rootHash();
-  // msg.depth = 0;
-  // qDebug() << "Initiating negotiation with msg: " << msg;
-  // transport->send(msg);
+  
 }
 
 QString FileClient::getDeviceName() { return deviceName; }
