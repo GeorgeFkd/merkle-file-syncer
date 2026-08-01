@@ -35,4 +35,5 @@ public:
                           const QByteArray &bytes) = 0;
   virtual bool finishWrite(const QString &user, const QString &path) = 0;
   virtual bool abortWrite(const QString &user, const QString &path) = 0;
+  virtual quint64 chunkSizeFor(quint64 fileSize, quint64 desiredChunkSize) = 0;
 };

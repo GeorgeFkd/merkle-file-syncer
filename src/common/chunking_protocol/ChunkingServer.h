@@ -23,6 +23,7 @@ struct ServerWriteCommand {
   QString path;
   QByteArray bytes;
   quint64 offset;
+  quint64 partNumber;
 };
 
 struct ChunkingServerInMsgCtx {
@@ -65,9 +66,11 @@ public:
                             const CancelTransfer *msg);
 
 Q_SIGNALS:
-  void uploadCompleted(ClientId clientId, QString path);
-  void downloadCompleted(ClientId clientId, QString path);
+  void uploadCompleted(ClientId, QString path);
+  void uploadStarted(ClientId,QString path,quint64 fileSize,quint64 chunkSize);
   void uploadCancelled(ClientId, QString path);
+
+  void downloadCompleted(ClientId clientId, QString path);
   void downloadCancelled(ClientId, QString path);
 
   void chunkToUploadArrived(ServerWriteCommand writeCmd);

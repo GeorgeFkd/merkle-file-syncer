@@ -48,7 +48,6 @@ void ChunkingClient::startUpload(const QString &path) {
 
   Q_EMIT(
       sendMessage(std::make_shared<RequestChunkSizeForUpload>(path, fileSize)));
-
 }
 
 void ChunkingClient::startDownload(const QString &path,
@@ -61,7 +60,6 @@ void ChunkingClient::startDownload(const QString &path,
 
   Q_EMIT(sendMessage(
       std::make_shared<RequestChunkSizeForDownload>(path, desiredChunkSize)));
-
 }
 
 void ChunkingClient::handleUploadSizeReceived(
@@ -116,6 +114,14 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived *msg) {
     uploadStates.remove(path);
     Q_EMIT uploadCompleted(path);
     return;
+  } else {
+    Q_EMIT(uploadProgress(msg->path, msg->partNumber,
+                          it->transferProgress.totalParts));
+  }
+
+  if (!uploadStates.contains(msg->path)) {
+    qDebug() << "Upload state was removed in client, wont send next part.";
+    return;
   }
 
   // 'it' must not be used after sendPart: it emits and re-enters, which can
@@ -134,8 +140,7 @@ void ChunkingClient::handleDownloadSizeReceived(
 
 void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
   auto it = downloadStates.find(msg->filepath);
-  assert(it != downloadStates.end());
-
+  assert(it != downloadStates.end() && "download state was not found on client chunk receive.");
   const quint64 chunkSz = it->transferProgress.chunkSize;
   const quint32 totalParts = it->transferProgress.totalParts;
   const quint32 nextPart = msg->partNumber + 1;
@@ -144,25 +149,26 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
   const bool finishedDownloading = totalParts != 0 && nextPart > totalParts;
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash downloadStates, invalidating this iterator.
-
   const quint64 offset = static_cast<quint64>(msg->partNumber - 1) * chunkSz;
-
   Q_EMIT writeRequested(WriteCommand{msg->filepath, offset, msg->bytes});
 
   if (finishedDownloading) {
     downloadStates.remove(msg->filepath);
+    Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
+        msg->filepath, msg->partNumber, QString(), QString())));
+    Q_EMIT downloadCompleted(msg->filepath);
+    return;
   }
 
-  ACKChunkReceived ack;
-  ack.path = msg->filepath;
-  ack.partNumber = msg->partNumber;
+  Q_EMIT(downloadProgress(msg->filepath, msg->partNumber, totalParts));
+
+  // a progress handler may have cancelled this download, removing its state
+  if (!downloadStates.contains(msg->filepath)) {
+    return;
+  }
 
   Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
       msg->filepath, msg->partNumber, QString(), QString())));
-
-  if (finishedDownloading) {
-    Q_EMIT downloadCompleted(msg->filepath);
-  }
 }
 
 void ChunkingClient::cancelUpload(const QString &path) {
@@ -172,5 +178,16 @@ void ChunkingClient::cancelUpload(const QString &path) {
 
   uploadStates.remove(path);
   Q_EMIT(sendMessage(std::make_shared<CancelTransfer>(path)));
+  Q_EMIT uploadCancelled(path);
+}
+
+void ChunkingClient::cancelDownload(const QString &path) {
+  auto it = downloadStates.find(path);
+  if (it == downloadStates.end()) {
+    qDebug() << "cancelDownload: no active download for" << path;
+    return;
+  }
+  downloadStates.remove(path);
+  Q_EMIT sendMessage(std::make_shared<CancelTransfer>(path));
   Q_EMIT downloadCancelled(path);
 }

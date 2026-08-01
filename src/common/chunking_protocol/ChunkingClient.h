@@ -45,6 +45,8 @@ Q_SIGNALS:
   void downloadCompleted(QString path);
   void uploadCancelled(QString path);
   void downloadCancelled(QString path);
+  void uploadProgress(QString path,quint32 currentPart,quint32 totalParts);
+  void downloadProgress(QString path, quint32 currentPart, quint32 totalParts);
   // void partNumberAcked(QString path, quint32 partNumber);
 
   void sendMessage(std::shared_ptr<Message> msg);

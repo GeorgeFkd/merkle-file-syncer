@@ -32,6 +32,7 @@ public:
   bool finishWrite(const QString& user, const QString& path) override;
 
   bool abortWrite(const QString& user, const QString& path) override;
+  quint64 chunkSizeFor(quint64 fileSize,quint64 desiredChunkSize) override;
 
 private:
   

@@ -200,3 +200,8 @@ bool LocalFileStorage::abortWrite(const QString &user, const QString &path) {
   activeSaveFiles.erase(it);
   return true;
 }
+
+quint64 LocalFileStorage::chunkSizeFor(quint64 fileSize,
+                                       quint64 desiredChunkSize) {
+  return static_cast<quint64>(5 * 1024 * 1024);
+}

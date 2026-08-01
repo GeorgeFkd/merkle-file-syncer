@@ -278,3 +278,7 @@ bool S3FileStorage::abortWrite(const QString &user, const QString &path) {
 
   return true;
 }
+
+quint64 S3FileStorage::chunkSizeFor(quint64 fileSize,quint64 desiredChunkSize) {
+  return 5 * 1024 * 1024;
+}

@@ -101,3 +101,25 @@ if(ENABLE_ASAN)
 endif()
 
 gtest_discover_tests(chunking_tests)
+
+add_executable(file_transfer_tests main.cpp file_transfer_tests.cpp)
+target_link_libraries(file_transfer_tests PRIVATE
+  GTest::gtest
+  rapidcheck
+  file_transfer_client
+  file_transfer_server
+  storage
+  messages
+  Qt6::Core
+)
+target_include_directories(file_transfer_tests PRIVATE
+  ${TEST_COMMON_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/src/common/file_transfer
+  ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol
+)
+if(BUILD_S3_IMPL)
+  target_include_directories(file_transfer_tests
+                             PRIVATE $ENV{VCPKG_ROOT}/installed/x64-linux)
+endif()
+set_target_properties(file_transfer_tests PROPERTIES AUTOMOC ON)
+gtest_discover_tests(file_transfer_tests)

@@ -44,55 +44,55 @@ QPair<MerkleTree, MerkleTree> buildTreesFromSpec(const QList<FileSpec> &specs,
   for (const auto &spec : specs) {
     switch (spec.fate) {
     case FileFate::OnlyClient:
-      client.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "c"));
+      client.addFile(spec.path, recent, hashOf(spec.path + "c"));
       expected.onlyInLeft.append({true, spec.path});
       break;
     case FileFate::OnlyServer:
-      server.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "s"));
+      server.addFile(spec.path, recent, hashOf(spec.path + "s"));
       expected.onlyInRight.append({true, spec.path});
       break;
     case FileFate::SameContent: {
       auto h = hashOf(spec.path);
-      client.addFile(spec.path.toStdString(), old, h);
-      server.addFile(spec.path.toStdString(), old, h);
+      client.addFile(spec.path,old, h);
+      server.addFile(spec.path, old, h);
       break;
     }
     case FileFate::DifferentContentClientNewer:
-      client.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "c"));
-      server.addFile(spec.path.toStdString(), old, hashOf(spec.path + "s"));
+      client.addFile(spec.path, recent, hashOf(spec.path + "c"));
+      server.addFile(spec.path, old, hashOf(spec.path + "s"));
       expected.modified.append(spec.path);
       break;
     case FileFate::DifferentContentServerNewer:
-      client.addFile(spec.path.toStdString(), old, hashOf(spec.path + "c"));
-      server.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "s"));
+      client.addFile(spec.path, old, hashOf(spec.path + "c"));
+      server.addFile(spec.path, recent, hashOf(spec.path + "s"));
       expected.modified.append(spec.path);
       break;
     case FileFate::DeletedOnClient:
-      client.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      server.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      client.deleteFile(spec.path.toStdString(), recent);
+      client.addFile(spec.path, old, hashOf(spec.path));
+      server.addFile(spec.path, old, hashOf(spec.path));
+      client.deleteFile(spec.path, recent);
       expected.deletionWinsLeft.append({spec.path, recent});
       break;
     case FileFate::DeletedOnServer:
-      client.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      server.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      server.deleteFile(spec.path.toStdString(), recent);
+      client.addFile(spec.path,old, hashOf(spec.path));
+      server.addFile(spec.path, old, hashOf(spec.path));
+      server.deleteFile(spec.path, recent);
       expected.deletionWinsRight.append({spec.path, recent});
       break;
     case FileFate::DeletedOnClientButServerNewer:
       // client tombstones old, server writes newer live version → resurrect on
       // client
-      client.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      client.deleteFile(spec.path.toStdString(), old);
-      server.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "s"));
+      client.addFile(spec.path, old, hashOf(spec.path));
+      client.deleteFile(spec.path, old);
+      server.addFile(spec.path, recent, hashOf(spec.path + "s"));
       expected.onlyInRight.append({true, spec.path});
       break;
     case FileFate::DeletedOnServerButClientNewer:
       // server tombstones old, client writes newer live version → propagate to
       // server
-      server.addFile(spec.path.toStdString(), old, hashOf(spec.path));
-      server.deleteFile(spec.path.toStdString(), old);
-      client.addFile(spec.path.toStdString(), recent, hashOf(spec.path + "c"));
+      server.addFile(spec.path, old, hashOf(spec.path));
+      server.deleteFile(spec.path, old);
+      client.addFile(spec.path, recent, hashOf(spec.path + "c"));
       expected.onlyInLeft.append({true, spec.path});
       break;
     }

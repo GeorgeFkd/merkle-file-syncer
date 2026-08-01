@@ -36,17 +36,6 @@ void ChunkingServer::onMessage(const Message *msg,
                          static_cast<const CancelTransfer *>(msg));
     return;
   }
-  //   void handleRequestChunkSizeForUpload(const ClientId &clientId,
-  //                                      const RequestChunkSizeForUpload &msg);
-  // void
-  // handleRequestChunkSizeForDownload(const ClientId &clientId,
-  //                                   const RequestChunkSizeForDownload &msg);
-  //
-  // void handleChunkReceived(const ClientId &clientId, const ChunkTransfer
-  // &msg); void handleAckChunkOfDownload(const ClientId &clientId,
-  //                               const ACKChunkReceived &msg);
-  // void handleCancelReceived(const ClientId &clientId,
-  //                           const CancelTransfer &msg);
 }
 
 void ChunkingServer::setChunkSizeCalculator(ChunkSizeCalculator calc) {
@@ -81,11 +70,11 @@ void ChunkingServer::handleRequestChunkSizeForUpload(
   uploadStates.insert(TransferKey{clientId, msg->path}, state);
 
   auto msgOut = SpecifyChunkSizeUpload{msg->path, chunkSize, totalChunks};
+  Q_EMIT(uploadStarted(clientId, msg->path, msg->fileSize, chunkSize));
   auto msgOutCtx = ChunkingServerOutMsgCtx{clientId};
   Q_EMIT sendMessage(std::make_shared<SpecifyChunkSizeUpload>(
                          msg->path, chunkSize, totalChunks),
                      msgOutCtx);
-
 }
 
 void ChunkingServer::handleRequestChunkSizeForDownload(
@@ -162,8 +151,8 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   // 'it' must not be used past this point: the emits below re-enter and can
   // rehash uploadStates, invalidating this iterator.
 
-  Q_EMIT chunkToUploadArrived(
-      ServerWriteCommand{clientId, msg->filepath, msg->bytes, offset});
+  Q_EMIT chunkToUploadArrived(ServerWriteCommand{
+      clientId, msg->filepath, msg->bytes, offset, msg->partNumber});
 
   if (uploadFinished) {
     uploadStates.remove(key);
