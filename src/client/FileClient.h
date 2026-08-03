@@ -18,6 +18,16 @@ enum class ClientState {
   Authenticated,
 };
 
+// A snapshot of how the local filesystem differs from the last-known DB state.
+// Produced by a pure scan; consumed by an apply step that reconciles the DB
+// and merkle tree. New/modified carry the filesystem mtime; deleted carry the
+// time the deletion was detected (or its recorded tombstone time).
+struct LocalChangeSet {
+  QList<QPair<QString, QDateTime>> newFiles;
+  QList<QPair<QString, QDateTime>> modifiedFiles;
+  QList<QPair<QString, QDateTime>> deletedFiles;
+};
+
 struct FileClientConfig {
   TransportProtocol protocol;
   QString rootDir;
@@ -40,7 +50,7 @@ public:
   void start();
   void clientTick();
   void setupConnections();
-
+  void scanFilesystemAndApplyChangesToDb();
   std::optional<QDateTime> writeFile(const QString &user, const QString &path,
                  const QByteArray &contents);
   std::optional<QDateTime> deleteFile(const QString &user, const QString &path);
@@ -93,6 +103,8 @@ private:
   std::unique_ptr<MerkleTree> merkleTree;
   QByteArray hashContents(const QByteArray& contents);
   void buildMerkleTree(const std::string& rootDir,const QString& username);
+  LocalChangeSet scanFilesystemForChanges() const;
+  void applyChangesToDb(const LocalChangeSet &changes);
   QList<QString> discoverNewFilesAndUpdateMtimes();
   QSet<QString> discoverDeletedFiles();
   void applyTombstone(const QString& path,const QDateTime& mtime);
@@ -140,3 +152,15 @@ private:
   // --- Misc ---
   void handleUnrecognized(Message *msg);
 };
+
+
+
+inline QDebug operator<<(QDebug dbg, const LocalChangeSet &changes) {
+  QDebugStateSaver saver(dbg);
+  dbg.nospace() << "LocalChangeSet(\n"
+                << "  new: " << changes.newFiles << "\n"
+                << "  modified: " << changes.modifiedFiles << "\n"
+                << "  deleted: " << changes.deletedFiles << "\n"
+                << ")";
+  return dbg;
+}

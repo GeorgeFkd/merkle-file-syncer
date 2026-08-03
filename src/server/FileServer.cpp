@@ -156,8 +156,9 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
   QDateTime serverMtime = storedMtime.value();
   bool serverHasNewer = serverMtime > clientMtime;
   if (serverHasNewer) {
-    // assert(false && "server has newer was not reached previously"); // this path is not exercised at all we never send deletes it
-                   // rejects, probs should write a test.
+    // assert(false && "server has newer was not reached previously"); // this
+    // path is not exercised at all we never send deletes it rejects, probs
+    // should write a test.
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
     return trySendNewerFile(username, msg->path, serverMtime,
                             FileOperationType::Delete);
@@ -205,6 +206,21 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   auto username = getUserFrom(msg);
 
   QDateTime clientMtime = msg->operationTime;
+
+  auto tombstone = database.deletedAt(username, msg->path);
+  bool serverTombstoneIsLatest =
+      tombstone.has_value() && tombstone.value() > clientMtime;
+  if (serverTombstoneIsLatest) {
+    qDebug() << "handleWriteRequest: tombstone newer than write, rejecting"
+             << msg->path;
+    // the file was deleted more recently than this write -> deletion wins.
+    // tell the client to delete it (mirror of ServerHasNewer for writes).
+    response.operationType = FileOperationType::Delete;
+    response.operationStatus = FileOperationStatus::ServerHasNewer;
+    response.operationTime = tombstone.value();
+    return response;
+  }
+
   auto serverTimeIsLatest =
       storedMtime.has_value() && (storedMtime.value() > clientMtime);
   if (serverTimeIsLatest) {
@@ -223,7 +239,8 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
 
   getUserTree(username)->addFile(path, clientMtime,
                                  hashContents(msg->contents));
-  qDebug() << "Updating db mtime: " << username << "-> " << path << " at: " << clientMtime;
+  qDebug() << "Updating db mtime: " << username << "-> " << path
+           << " at: " << clientMtime;
   database.updateFileMtime(username, path, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;
@@ -327,11 +344,17 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   auto storedMtime = database.readMtime(username, msg->path);
 
   if (msg->operationType == FileOperationType::Delete) {
+    qDebug() << "Delete request from device: "
+             << sessionStore.getDeviceName(msg->token)
+             << " receives the following msg: ";
     qDebug() << *msg;
     return handleDeleteRequest(msg, msg->path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
-    qDebug() << "Write request receives the following msg: ";
+    qDebug() << "Write request from device: "
+             << sessionStore.getDeviceName(msg->token)
+             << " receives the following msg: ";
     qDebug() << *msg;
+
     return handleWriteRequest(msg, msg->path, storedMtime);
   }
   assert(false);

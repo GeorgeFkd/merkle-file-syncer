@@ -9,6 +9,7 @@
 #include <QDir>
 #include <memory>
 #include <qnamespace.h>
+#include <tuple>
 
 FileClient::FileClient() { fileStorage = std::make_unique<LocalFileStorage>(); }
 
@@ -187,57 +188,51 @@ void FileClient::handleNaiveListing(ListResponseMessage *msg) {
 
   QSet<QString> serverPaths;
   for (const auto &entry : msg->entries) {
-    if (!entry.deleted) {
+    if (!entry.deleted)
       serverPaths.insert(entry.path);
-      continue;
-    }
-    // server reports a deletion — decide, don't apply
-    auto localMtime = database.readMtime(username, entry.path);
-    if (localMtime.has_value() && localMtime.value() > entry.mtime) {
-      // client's version is newer than the server's deletion -> client wins
-      state.diffEntries.onlyInLeft.append({true, entry.path}); // re-upload
-    } else {
-      // server deletion wins -> apply locally (deferred to
-      // handleNegotiationCompleted)
-      state.diffEntries.deletionWinsRight.append({entry.path, entry.mtime});
-    }
-    // if (entry.deleted) {
-    //   applyTombstone(entry.path, entry.mtime);
-    // } else {
-    //   serverPaths.insert(entry.path);
-    // }
   }
 
-  // local-only and locally-deleted,mtimes should be updated before using the
-  // db.
-  for (const auto &p : discoverNewFilesAndUpdateMtimes()) {
-    if (!serverPaths.contains(p)) {
-      state.diffEntries.onlyInLeft.append({true, p});
-    }
-  }
-  for (const auto &p : discoverDeletedFiles()) {
-    auto deletedAt = database.deletedAt(username, p);
-    if (deletedAt.has_value()) {
-      qDebug() << "Existing tombstone wins";
-    } else {
-      qDebug() << "QDateTime::currentDateTime() wins";
-    }
-    state.diffEntries.deletionWinsLeft.append(
-        {p, deletedAt.value_or(QDateTime::currentDateTime())});
-  }
-  // server files -> onlyInRight / modified
+  // --- server-reported entries: compare against reconciled local DB ---
   for (const auto &entry : msg->entries) {
-    if (entry.deleted)
-      continue;
-    auto localMtime = database.readMtime(username, entry.path);
-    if (!localMtime.has_value()) {
-      state.diffEntries.onlyInRight.append({true, entry.path});
-    } else if (entry.mtime > localMtime.value()) {
-      state.diffEntries.modified.append(entry.path);
-    } else if (localMtime.value() > entry.mtime) {
-      qDebug() << "CLIENT NEWER, staging upload:" << entry.path
-               << "local:" << localMtime.value() << "server:" << entry.mtime;
-      state.diffEntries.onlyInLeft.append({true, entry.path});
+    if (entry.deleted) {
+      // server deletion vs local
+      auto localMtime = database.readMtime(username, entry.path);
+      if (localMtime.has_value() && localMtime.value() > entry.mtime) {
+        state.diffEntries.onlyInLeft.append(
+            {true, entry.path}); // client newer -> upload
+      } else {
+        state.diffEntries.deletionWinsRight.append({entry.path, entry.mtime});
+      }
+    } else {
+      auto localMtime = database.readMtime(username, entry.path);
+      if (!localMtime.has_value()) {
+        state.diffEntries.onlyInRight.append(
+            {true, entry.path}); // server-only -> download
+      } else if (entry.mtime > localMtime.value()) {
+        state.diffEntries.modified.append(
+            entry.path); // server newer -> download
+      } else if (localMtime.value() > entry.mtime) {
+        state.diffEntries.onlyInLeft.append(
+            {true, entry.path}); // client newer -> upload
+      }
+    }
+  }
+
+  // --- local entries the server didn't report ---
+  // reconciled DB already reflects the filesystem (scan+apply ran in naiveTick)
+  for (const auto &path : database.allTrackedFiles(username)) {
+    if (!serverPaths.contains(path)) {
+      state.diffEntries.onlyInLeft.append({true, path}); // local-only -> upload
+    }
+  }
+
+  // --- locally-deleted (tombstones) the server still has ---
+  auto tombstones = database.allTombstones(username);
+  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
+    const QString &path = it.key();
+    const QDateTime &deletedAt = it.value();
+    if (serverPaths.contains(path)) {
+      state.diffEntries.deletionWinsLeft.append({path, deletedAt});
     }
   }
 
@@ -293,6 +288,10 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
     auto localMtime = fileStorage->getMtime(username, msg->path);
     if (localMtime.has_value()) {
       database.updateFileMtime(username, msg->path, localMtime.value());
+      if (merkleTree) {
+        merkleTree->addFile(msg->path, localMtime.value(),
+                            hashContents(msg->contents));
+      }
     } else {
       qDebug() << "handleWriteResponse: no local mtime after write for"
                << msg->path;
@@ -316,11 +315,13 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   case FileOperationStatus::Done: {
     qDebug() << "Delete acked for:" << msg->path;
     database.removeFileMtime(username, msg->path);
+    if(merkleTree) {
+        merkleTree->deleteFile(msg->path,msg->operationTime);
+      }
     break;
   }
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server rejected deletion, restoring:" << msg->path;
-    // assert(false);
     applyServerVersion(msg->path, msg->contents);
     break;
   }
@@ -462,10 +463,87 @@ void FileClient::clientTick() {
 
 void FileClient::naiveTick() {
 
+  auto result = scanFilesystemForChanges();
+  applyChangesToDb(result);
   ListRequestMessage req;
   req.token = token;
   awaitingListResponse = true;
   transport->send(req);
+}
+
+LocalChangeSet FileClient::scanFilesystemForChanges() const {
+  LocalChangeSet changes;
+
+  auto fileList = fileStorage->listFiles(username);
+  QSet<QString> currentFsState(fileList.begin(), fileList.end());
+
+  QSet<QString> tracked = database.allTrackedFiles(username);
+  qDebug() << "Current is: " << currentFsState;
+  qDebug() << "Tracked is: " << tracked;
+
+  for (const auto &path : currentFsState) {
+    auto fsMtime = fileStorage->getMtime(username, path);
+    assert(fsMtime.has_value() &&
+           "a listed file could not have its mtime read.");
+
+    auto dbMtime = database.readMtime(username, path);
+    if (!dbMtime.has_value()) {
+      changes.newFiles.append({path, fsMtime.value()});
+    } else if (fsMtime.value() != dbMtime.value()) {
+      changes.modifiedFiles.append({path, fsMtime.value()});
+    }
+  }
+
+  for (const auto &path : tracked) {
+    if (!currentFsState.contains(path)) {
+      // deletion detected now; use the recorded tombstone time if we have one,
+      // otherwise stamp detection time.
+      auto deletedAt = database.deletedAt(username, path);
+      changes.deletedFiles.append(
+          {path, deletedAt.value_or(QDateTime::currentDateTime())});
+    }
+  }
+  qDebug() << "Result of scan is: " << changes;
+  return changes;
+}
+
+void FileClient::applyChangesToDb(const LocalChangeSet &changes) {
+  // New and modified: same DB+tree update (both write the current mtime/hash).
+  // Kept as one loop since the handling is identical.
+  auto applyPresent = [this](const QPair<QString, QDateTime> &entry) {
+    auto &path = entry.first;
+    auto &mtime = entry.second;
+    database.updateFileMtime(username, path, mtime);
+    if (merkleTree) {
+      auto contents = fileStorage->readFile(username, path);
+      if (contents.has_value()) {
+        merkleTree->addFile(path, mtime, hashContents(contents.value()));
+      }
+    }
+  };
+
+  for (const auto &entry : changes.newFiles) {
+    applyPresent(entry);
+  }
+  for (const auto &entry : changes.modifiedFiles) {
+    applyPresent(entry);
+  }
+
+  // Deletions: remove from DB tracking and tombstone the tree, together.
+  for (const auto &entry : changes.deletedFiles) {
+    const QString &path = entry.first;
+    const QDateTime &deletedAt = entry.second;
+    // database.removeFileMtime(username, path);
+    database.markDeleted(username, path, deletedAt, /*untrack=*/true);
+    if (merkleTree) {
+      merkleTree->deleteFile(path, deletedAt);
+    }
+  }
+}
+
+void FileClient::scanFilesystemAndApplyChangesToDb() {
+  auto changes = scanFilesystemForChanges();
+  applyChangesToDb(changes);
 }
 
 void FileClient::merkleTick() {
@@ -475,15 +553,8 @@ void FileClient::merkleTick() {
     return;
   }
   currentlyNegotiatingFileDiffs = true;
-  discoverNewFilesAndUpdateMtimes();
-  for (const auto &path : discoverDeletedFiles()) {
-  database.removeFileMtime(username, path);
-    //TODO: i am not deleting it from merkle tree bcs it is already done in deleteFile in tests
-  // if (merkleTree) {
-  //   merkleTree->deleteFile(path, QDateTime::currentDateTime());
-  // }
-}
-  // TODO: ensure that deletes are actually discoverd
+  auto result = scanFilesystemForChanges();
+  applyChangesToDb(result);
   merkleSyncClient.startNegotiation(merkleTree.get());
 }
 

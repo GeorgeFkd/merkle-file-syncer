@@ -158,6 +158,11 @@ protected:
     delete clientDir;
     delete serverDir;
   }
+  
+  void addMinimumDelayForTimestampOrdering() {
+    QThread::msleep(
+        2); // ensure subsequent operations have strictly newer wall-clock time
+  }
 
   void waitForSync(FileClient &client) {
     QEventLoop loop;
@@ -256,7 +261,11 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   ASSERT_TRUE(contentsBefore.has_value());
   ASSERT_EQ(contentsBefore.value(), QByteArray("to be deleted"));
 
-  this->client->deleteFile(this->username, "test.txt");
+  // delete straight through storage (simulating an external/user deletion);
+  // the next tick's scan should detect the absence and propagate it.
+  this->addMinimumDelayForTimestampOrdering();
+  ASSERT_TRUE(
+      this->client->getStorage()->deleteFile(this->username, "test.txt"));
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
@@ -281,13 +290,61 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
                   ->readFile(this->username, "subdir/file2.txt")
                   .has_value());
 
-  this->client->deleteFile(this->username, "subdir/file1.txt");
-  this->client->deleteFile(this->username, "subdir/file2.txt");
+  // delete both through storage; the scan detects both absences on next tick.
+  ASSERT_TRUE(this->client->getStorage()->deleteFile(this->username,
+                                                     "subdir/file1.txt"));
+  ASSERT_TRUE(this->client->getStorage()->deleteFile(this->username,
+                                                     "subdir/file2.txt"));
   this->client->clientTick();
   this->waitForSync(*(this->client));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
+
+// TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
+//   this->client->writeFile(this->username, "test.txt", "to be deleted");
+//
+//   QCoreApplication::processEvents();
+//   this->client->clientTick();
+//   this->waitForSync(*(this->client));
+//
+//   auto contentsBefore =
+//       this->fileServer.getStorage()->readFile(this->username, "test.txt");
+//   ASSERT_TRUE(contentsBefore.has_value());
+//   ASSERT_EQ(contentsBefore.value(), QByteArray("to be deleted"));
+//
+//   this->client->deleteFile(this->username, "test.txt");
+//   this->client->clientTick();
+//   this->waitForSync(*(this->client));
+//
+//   ASSERT_TRUE(this->filesystemsAreEqual());
+//   ASSERT_FALSE(this->fileServer.getStorage()
+//                    ->readFile(this->username, "test.txt")
+//                    .has_value());
+// }
+//
+// TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
+//   this->client->writeFile(this->username, "subdir/file1.txt", "file1");
+//   this->client->writeFile(this->username, "subdir/file2.txt", "file2");
+//
+//   QCoreApplication::processEvents();
+//   this->client->clientTick();
+//   this->waitForSync(*(this->client));
+//
+//   ASSERT_TRUE(this->fileServer.getStorage()
+//                   ->readFile(this->username, "subdir/file1.txt")
+//                   .has_value());
+//   ASSERT_TRUE(this->fileServer.getStorage()
+//                   ->readFile(this->username, "subdir/file2.txt")
+//                   .has_value());
+//
+//   this->client->deleteFile(this->username, "subdir/file1.txt");
+//   this->client->deleteFile(this->username, "subdir/file2.txt");
+//   this->client->clientTick();
+//   this->waitForSync(*(this->client));
+//
+//   ASSERT_TRUE(this->filesystemsAreEqual());
+// }
 
 template <typename Tag> class MerkleSyncTest : public ::testing::Test {
 protected:
@@ -617,8 +674,9 @@ TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
                   .has_value());
 
   this->addMinimumDelayForTimestampOrdering();
-  // A deletes
-  this->deviceA->deleteFile(this->username, "shared.txt");
+  // A deletes through storage; the scan detects the absence on next tick
+  ASSERT_TRUE(
+      this->deviceA->getStorage()->deleteFile(this->username, "shared.txt"));
   this->tickAndWait(*this->deviceA);
 
   // B and C should learn about the deletion
@@ -641,10 +699,11 @@ TYPED_TEST(MultiDeviceSyncTest, directoryDeletionPropagatesAcrossDevices) {
   this->tickAndWait(*this->deviceC);
 
   this->addMinimumDelayForTimestampOrdering();
-  this->deviceA->deleteFile(this->username, "subdir/file1.txt");
-  this->deviceA->deleteFile(this->username, "subdir/file2.txt");
+  ASSERT_TRUE(this->deviceA->getStorage()->deleteFile(this->username,
+                                                      "subdir/file1.txt"));
+  ASSERT_TRUE(this->deviceA->getStorage()->deleteFile(this->username,
+                                                      "subdir/file2.txt"));
   this->tickAndWait(*this->deviceA);
-
   this->tickAndWait(*this->deviceB);
   this->tickAndWait(*this->deviceC);
 
@@ -679,8 +738,10 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
   this->tickAndWait(*this->deviceB);
 
   this->addMinimumDelayForTimestampOrdering();
-  this->deviceA->deleteFile(this->username,
-                            "test.txt"); // A deletes (stamped now)
+  // A deletes through storage (detected as absent by A's next scan)
+  ASSERT_TRUE(
+      this->deviceA->getStorage()->deleteFile(this->username, "test.txt"));
+  this->deviceA->scanFilesystemAndApplyChangesToDb();
 
   this->addMinimumDelayForTimestampOrdering();
   this->deviceB->writeFile(this->username, "test.txt",
@@ -699,26 +760,4 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
       this->deviceA->getStorage()->readFile(this->username, "test.txt");
   ASSERT_TRUE(aContents.has_value());
   ASSERT_EQ(aContents.value(), QByteArray("B's newer version"));
-  // // GTEST_SKIP_("Not yet fixed");
-  // this->deviceA->writeFile(this->username,"test.txt","original");
-  // this->tickAndWait(*this->deviceA);
-  // this->tickAndWait(*this->deviceB);
-  //
-  // this->addMinimumDelayForTimestampOrdering();
-  //
-  // this->deviceB->writeFile(this->username,"test.txt","B's newer version");
-  // this->tickAndWait(*this->deviceB);
-  //
-  // this->deviceA->deleteFile(this->username,"test.txt");
-  // this->tickAndWait(*this->deviceA);
-  //
-  // auto serverContents =
-  // this->fileServer.getStorage()->readFile(this->username,"test.txt");
-  // ASSERT_TRUE(serverContents.has_value());
-  // ASSERT_EQ(serverContents.value(),QByteArray("B's newer version"));
-
-  // auto aContents =
-  // this->deviceA->getStorage()->readFile(this->username,"test.txt");
-  // ASSERT_TRUE(aContents.has_value());
-  // ASSERT_EQ(aContents.value(),QByteArray("B's newer version"));
 }

@@ -212,7 +212,7 @@ bool MerkleTree::addFile(const QString &relativePath, const QDateTime &mtime,
       current->children.push_back(std::move(newNode));
       current = current->children.back().get();
       if (current->type == FileType::File) {
-        qDebug() << "Propagating hash of: " << current->path << ".";
+        // qDebug() << "Propagating hash of: " << current->path << ".";
         propagateHashUpward(current);
         return true;
       }
@@ -275,8 +275,8 @@ void MerkleTree::propagateHashUpward(FileNode *node) {
   FileNode *current = node;
   while (current->parent != nullptr) {
     recomputeDirHash(current->parent);
-    qDebug() << "Propagating to: " << current->parent->path
-             << " hash: " << current->parent->hash.toHex() << ".";
+    // qDebug() << "Propagating to: " << current->parent->path
+    //          << " hash: " << current->parent->hash.toHex() << ".";
 
     current = current->parent;
   }
