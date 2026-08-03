@@ -63,9 +63,11 @@ void FileDb::storeUser(const QString &user, const QString &password,
 }
 
 void FileDb::markDeleted(const QString &user, const QString &file,
-                         const QDateTime &deletedAt) {
+                         const QDateTime &deletedAt,bool untrack) {
   auto key = makeKey(user, file);
-  fileMtimes.remove(key);
+  if (untrack) {
+    fileMtimes.remove(key);
+  }
   tombstones[key] = deletedAt;
 }
 

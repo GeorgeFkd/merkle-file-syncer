@@ -8,12 +8,11 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QRandomGenerator>
+#include <QThread>
 #include <QTimer>
 #include <QUuid>
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
-#include <QThread>
-
 
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
@@ -488,7 +487,8 @@ protected:
   }
 
   void addMinimumDelayForTimestampOrdering() {
-    QThread::msleep(1); // ensure subsequent operations have strictly newer wall-clock time
+    QThread::msleep(
+        1); // ensure subsequent operations have strictly newer wall-clock time
   }
 
   void TearDown() override {
@@ -616,7 +616,6 @@ TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
                   ->readFile(this->username, "shared.txt")
                   .has_value());
 
-  
   this->addMinimumDelayForTimestampOrdering();
   // A deletes
   this->deviceA->deleteFile(this->username, "shared.txt");
@@ -674,25 +673,52 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerWinsForAllDevices) {
   }
 }
 
-TYPED_TEST(MultiDeviceSyncTest,serverNewerRejectsClientDelete) {
-  GTEST_SKIP_("Not yet fixed");
-  this->deviceA->writeFile(this->username,"test.txt","original");
+TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
+  this->deviceA->writeFile(this->username, "test.txt", "original");
   this->tickAndWait(*this->deviceA);
   this->tickAndWait(*this->deviceB);
 
   this->addMinimumDelayForTimestampOrdering();
+  this->deviceA->deleteFile(this->username,
+                            "test.txt"); // A deletes (stamped now)
 
-  this->deviceB->writeFile(this->username,"test.txt","B's newer version");
-  this->tickAndWait(*this->deviceA);
+  this->addMinimumDelayForTimestampOrdering();
+  this->deviceB->writeFile(this->username, "test.txt",
+                           "B's newer version"); // later than delete
+  this->tickAndWait(*this->deviceB); // B's newer version reaches server FIRST
 
-  this->deviceA->deleteFile(this->username,"test.txt");
-  this->tickAndWait(*this->deviceA);
+  this->tickAndWait(
+      *this->deviceA); // A's stale delete arrives -> server rejects
 
-  auto serverContents = this->fileServer.getStorage()->readFile(this->username,"test.txt");
+  auto serverContents =
+      this->fileServer.getStorage()->readFile(this->username, "test.txt");
   ASSERT_TRUE(serverContents.has_value());
-  ASSERT_EQ(serverContents.value(),QByteArray("B's newer version"));
-
-  auto aContents = this->deviceA->getStorage()->readFile(this->username,"test.txt");
+  ASSERT_EQ(serverContents.value(), QByteArray("B's newer version"));
+  // A should have restored B's version after the reject
+  auto aContents =
+      this->deviceA->getStorage()->readFile(this->username, "test.txt");
   ASSERT_TRUE(aContents.has_value());
-  ASSERT_EQ(aContents.value(),QByteArray("B's newer version"));
+  ASSERT_EQ(aContents.value(), QByteArray("B's newer version"));
+  // // GTEST_SKIP_("Not yet fixed");
+  // this->deviceA->writeFile(this->username,"test.txt","original");
+  // this->tickAndWait(*this->deviceA);
+  // this->tickAndWait(*this->deviceB);
+  //
+  // this->addMinimumDelayForTimestampOrdering();
+  //
+  // this->deviceB->writeFile(this->username,"test.txt","B's newer version");
+  // this->tickAndWait(*this->deviceB);
+  //
+  // this->deviceA->deleteFile(this->username,"test.txt");
+  // this->tickAndWait(*this->deviceA);
+  //
+  // auto serverContents =
+  // this->fileServer.getStorage()->readFile(this->username,"test.txt");
+  // ASSERT_TRUE(serverContents.has_value());
+  // ASSERT_EQ(serverContents.value(),QByteArray("B's newer version"));
+
+  // auto aContents =
+  // this->deviceA->getStorage()->readFile(this->username,"test.txt");
+  // ASSERT_TRUE(aContents.has_value());
+  // ASSERT_EQ(aContents.value(),QByteArray("B's newer version"));
 }

@@ -273,3 +273,13 @@ inline QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack) {
   return dbg;
 }
 
+inline QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
+  QDebugStateSaver saver(dbg);
+  dbg.nospace() << "SyncRequestMessage(path=" << msg.path
+                << ", contentsSize=" << msg.contents.size()
+                << ", operationTime=" << msg.operationTime
+                << ", operationType=" << static_cast<int>(msg.operationType)
+                << ", operationStatus=" << static_cast<int>(msg.operationStatus)
+                << ")";
+  return dbg;
+}

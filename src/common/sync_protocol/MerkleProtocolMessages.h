@@ -50,3 +50,11 @@ inline MerkleProtocolMessage toProtocolMessage(MerkleSyncMessage w) {
   m.fileEntriesPerChild = std::move(w.fileEntriesPerChild);
   return m;
 }
+
+inline QDebug operator<<(QDebug debug, const DeletionEntry &entry)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "DeletionEntry(path=" << entry.path
+                    << ", deletedAt=" << entry.deletedAt << ")";
+    return debug;
+}

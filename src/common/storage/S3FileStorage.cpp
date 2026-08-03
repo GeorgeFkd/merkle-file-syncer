@@ -54,7 +54,8 @@ S3FileStorage::readFile(const QString &user, const QString &filename) const {
   };
   auto resp = client->GetObject(args);
   if (!resp) {
-    qDebug() << "S3 read failed:" << resp.Error().String().c_str();
+    qDebug() << "S3 read failed:" << resp.Error().String().c_str()
+             << " for user: " << user << " at path: " << filename;
     return std::nullopt;
   }
   return result;
@@ -279,6 +280,7 @@ bool S3FileStorage::abortWrite(const QString &user, const QString &path) {
   return true;
 }
 
-quint64 S3FileStorage::chunkSizeFor(quint64 fileSize,quint64 desiredChunkSize) {
+quint64 S3FileStorage::chunkSizeFor(quint64 fileSize,
+                                    quint64 desiredChunkSize) {
   return 5 * 1024 * 1024;
 }

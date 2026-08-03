@@ -138,7 +138,6 @@ TYPED_TEST(FileTransferTest, uploadRoundTrips) {
   ASSERT_TRUE(this->clientStorage->writeFile(this->user, path, original));
 
   this->client->startUpload(path);
-  this->pump();
 
   ASSERT_TRUE(this->uploadDone);
   auto onServer = this->serverStorage->readFile(this->user, path);
@@ -152,7 +151,6 @@ TYPED_TEST(FileTransferTest, downloadRoundTrips) {
   ASSERT_TRUE(this->serverStorage->writeFile(this->user, path, original));
 
   this->client->startDownload(path, /*desiredChunkSize*/ 1024);
-  this->pump();
 
   ASSERT_TRUE(this->downloadDone);
   auto onClient = this->clientStorage->readFile(this->user, path);
@@ -168,7 +166,6 @@ TYPED_TEST(FileTransferTest, uploadMultiPartRoundTrips) {
   ASSERT_TRUE(this->clientStorage->writeFile(this->user, path, original));
 
   this->client->startUpload(path);
-  this->pump(500);
 
   ASSERT_TRUE(this->uploadDone);
   auto onServer = this->serverStorage->readFile(this->user, path);
@@ -192,7 +189,6 @@ TYPED_TEST(FileTransferTest, cancelUploadDiscardsPartial) {
       });
 
   this->client->startUpload(path);
-  this->pump();
 
   ASSERT_TRUE(this->uploadCancelledFlag);
   auto onServer = this->serverStorage->readFile(this->user, path);
@@ -213,7 +209,6 @@ TYPED_TEST(FileTransferTest, cancelDownloadDiscardsPartial) {
       });
 
   this->client->startDownload(path, /*desiredChunkSize*/ 65536);
-  this->pump();
 
   ASSERT_TRUE(this->downloadCancelledFlag);
   auto onClient = this->clientStorage->readFile(this->user, path);
@@ -245,7 +240,6 @@ TYPED_TEST(FileTransferTest, fileInvisibleUntilFinish) {
       });
 
   this->client->startUpload(path);
-  this->pump();
 
   // we actually observed the mid-transfer moment
   ASSERT_TRUE(checkedMidTransfer);

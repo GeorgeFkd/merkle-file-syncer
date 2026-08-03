@@ -154,11 +154,13 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
 
   QDateTime clientMtime = msg->operationTime;
   QDateTime serverMtime = storedMtime.value();
-  if (serverMtime > clientMtime) {
-    assert(false); // this path is not exercised at all we never send deletes it rejects, probs should write a test.
+  bool serverHasNewer = serverMtime > clientMtime;
+  if (serverHasNewer) {
+    // assert(false && "server has newer was not reached previously"); // this path is not exercised at all we never send deletes it
+                   // rejects, probs should write a test.
     qDebug() << "handleDeleteRequest: server mtime ahead, sending newer file";
-    return trySendNewerFile(username, msg->path,
-                            serverMtime, FileOperationType::Delete);
+    return trySendNewerFile(username, msg->path, serverMtime,
+                            FileOperationType::Delete);
   }
 
   if (!fileStorage->deleteFile(username, msg->path)) {
@@ -206,14 +208,14 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   auto serverTimeIsLatest =
       storedMtime.has_value() && (storedMtime.value() > clientMtime);
   if (serverTimeIsLatest) {
-    //this path is still taken, so we are sending to the server writes that it rejects
+    // this path is still taken, so we are sending to the server writes that it
+    // rejects
     qDebug() << "handleWriteRequest: server mtime ahead, sending newer file";
-    return trySendNewerFile(username, msg->path,
-                            storedMtime.value(), FileOperationType::Write);
+    return trySendNewerFile(username, msg->path, storedMtime.value(),
+                            FileOperationType::Write);
   }
 
-  if (!fileStorage->writeFile(username,msg->path,
-                              msg->contents)) {
+  if (!fileStorage->writeFile(username, msg->path, msg->contents)) {
     qDebug() << "handleWriteRequest: failed to write file to storage";
     response.operationStatus = FileOperationStatus::Error;
     return response;
@@ -221,6 +223,7 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
 
   getUserTree(username)->addFile(path, clientMtime,
                                  hashContents(msg->contents));
+  qDebug() << "Updating db mtime: " << username << "-> " << path << " at: " << clientMtime;
   database.updateFileMtime(username, path, clientMtime);
   response.operationStatus = FileOperationStatus::Done;
   return response;
@@ -249,8 +252,7 @@ FileServer::buildMerkleTree(const QString &username) {
       continue;
     }
 
-    tree->addFile(path, mtime.value(),
-                  hashContents(contents.value()));
+    tree->addFile(path, mtime.value(), hashContents(contents.value()));
   }
 
   // Apply DB tombstones to the tree
@@ -325,8 +327,11 @@ SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   auto storedMtime = database.readMtime(username, msg->path);
 
   if (msg->operationType == FileOperationType::Delete) {
+    qDebug() << *msg;
     return handleDeleteRequest(msg, msg->path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
+    qDebug() << "Write request receives the following msg: ";
+    qDebug() << *msg;
     return handleWriteRequest(msg, msg->path, storedMtime);
   }
   assert(false);
