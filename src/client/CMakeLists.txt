@@ -13,9 +13,11 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/storage
          ${CMAKE_SOURCE_DIR}/src/common/filesystem
          ${CMAKE_SOURCE_DIR}/src/common/sync_protocol
+         ${CMAKE_SOURCE_DIR}/src/common/auth
+         ${CMAKE_SOURCE_DIR}/src/common/fs_metadata
          )
 target_link_libraries(
-  merkle_client_lib PRIVATE messages filesutil storage Qt6::Core merkle_protocol_client
+  merkle_client_lib PRIVATE messages fs_metadata filesutil storage users_db Qt6::Core merkle_protocol_client
                             Qt6::Network)
 qt_add_executable(merkle_client main.cpp)
 

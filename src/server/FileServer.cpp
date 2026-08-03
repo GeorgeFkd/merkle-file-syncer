@@ -123,8 +123,7 @@ bool FileServer::writeFile(const QString &user, const QString &file,
     qDebug() << "writeFile: storage write failed for" << file;
     return false;
   }
-  database.updateFileMtime(user, file, mtime);
-  getUserTree(user)->addFile(file, mtime, hashContents(contents));
+  recordFile(user, file, mtime, hashContents(contents));
   return true;
 }
 
@@ -171,8 +170,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
   }
 
   QDateTime clientDeletedAt = msg->operationTime;
-  database.markDeleted(username, path, clientDeletedAt);
-  getUserTree(username)->deleteFile(msg->path, clientDeletedAt);
+  recordDeletion(username, path, clientDeletedAt);
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -236,12 +234,9 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
     response.operationStatus = FileOperationStatus::Error;
     return response;
   }
-
-  getUserTree(username)->addFile(path, clientMtime,
-                                 hashContents(msg->contents));
   qDebug() << "Updating db mtime: " << username << "-> " << path
            << " at: " << clientMtime;
-  database.updateFileMtime(username, path, clientMtime);
+  recordFile(username, path, clientMtime, hashContents(msg->contents));
   response.operationStatus = FileOperationStatus::Done;
   return response;
 }
@@ -251,49 +246,18 @@ QByteArray FileServer::hashContents(const QByteArray &contents) {
   return hash;
 }
 
-std::unique_ptr<MerkleTree>
-FileServer::buildMerkleTree(const QString &username) {
-  auto tree = std::make_unique<MerkleTree>(username);
+void FileServer::recordFile(const QString &username, const QString &path,
+                            const QDateTime &mtime, const QByteArray &hash) {
+  database.recordFile(username, path, mtime, hash);
+}
 
-  // TODO: build from db and not storage
-  auto files = fileStorage->listFiles(username);
-  for (const auto &path : files) {
-    auto contents = fileStorage->readFile(username, path);
-    if (!contents.has_value()) {
-      qDebug() << "buildMerkleTree: missing storage for tracked path" << path;
-      continue;
-    }
-    auto mtime = database.readMtime(username, path);
-    if (!mtime.has_value()) {
-      qDebug() << "buildMerkleTree: no mtime for path" << path;
-      continue;
-    }
-
-    tree->addFile(path, mtime.value(), hashContents(contents.value()));
-  }
-
-  // Apply DB tombstones to the tree
-  auto tombstones = database.allTombstones(username);
-  QString prefix = username + "/";
-  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-    tree->deleteFile(it.key(), it.value());
-  }
-
-  assert(tree->verifyHashes());
-  return tree;
+void FileServer::recordDeletion(const QString &username, const QString &path,
+                                const QDateTime &deletedAt) {
+  database.recordDeletion(username, path, deletedAt);
 }
 
 MerkleTree *FileServer::getUserTree(const QString &username) {
-  auto it = userTrees.find(username);
-  if (it != userTrees.end()) {
-    return it->second.get();
-  }
-
-  auto tree = buildMerkleTree(username);
-
-  auto *raw = tree.get();
-  userTrees.emplace(username, std::move(tree));
-  return raw;
+  return database.getUserTree(username);
 }
 
 void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
@@ -391,7 +355,7 @@ AuthResponseMessage FileServer::handleAuth(AuthMessage *msg) {
     return response;
   }
 
-  if (!verifyUserCredentials(msg->username, msg->password)) {
+  if (!usersDb.userExists(msg->username, msg->password)) {
     qDebug() << "handleAuth: invalid credentials for" << msg->username;
     response.success = false;
     response.error = "invalid credentials";

@@ -8,18 +8,21 @@ qt_add_library(merkle_server_lib STATIC
 
 target_include_directories(
   merkle_server_lib
-  PUBLIC ${CMAKE_SOURCE_DIR}/src/common/communication
+  PRIVATE ${CMAKE_SOURCE_DIR}/src/common/communication
          ${CMAKE_SOURCE_DIR}/src/common/storage
          ${CMAKE_SOURCE_DIR}/src/common/filesystem
          ${CMAKE_SOURCE_DIR}/src/common/auth
          ${CMAKE_SOURCE_DIR}/src/common/sync_protocol
+         ${CMAKE_SOURCE_DIR}/src/common/fs_metadata
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib
-  PRIVATE messages
+  PUBLIC messages
           filesutil
           storage
           sessionregistry
+          users_db
+          fs_metadata
           Qt6::Core
           Qt6::Network
 merkle_protocol_server)

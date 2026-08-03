@@ -1,11 +1,12 @@
 #pragma once
-#include "FileDb.h"
 #include "FileStorage.h"
 #include "MerkleSyncServer.h"
 #include "MerkleTree.h"
 #include "Messages.h"
 #include "ServerTransport.h"
 #include "SessionRegistry.h"
+#include "UsersDb.h"
+#include "FSMetadata.h"
 #include <QLocalServer>
 #include <QLocalSocket>
 
@@ -55,14 +56,18 @@ private:
 
   // --- Storage / DB / per-user merkle trees ---
   std::unique_ptr<FileStorage> fileStorage;
-  FileDb database;
+  FSMetadata database;
+  UsersDb usersDb;
   struct QStringHash {
     size_t operator()(const QString &s) const { return qHash(s); }
   };
   std::unordered_map<QString, std::unique_ptr<MerkleTree>, QStringHash>
       userTrees;
   MerkleTree *getUserTree(const QString &username);
-  std::unique_ptr<MerkleTree> buildMerkleTree(const QString &username);
+  void recordFile(const QString &username, const QString &path,
+                  const QDateTime &mtime, const QByteArray &hash);
+  void recordDeletion(const QString &username, const QString &path,
+                      const QDateTime &deletedAt);
   QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---

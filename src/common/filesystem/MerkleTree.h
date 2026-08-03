@@ -8,7 +8,7 @@ public:
   bool addFile(const QString& relativePath,const QDateTime& mtime,const QByteArray& hash);
   bool deleteFile(
       const QString& relativePath,
-      const QDateTime &deletedAt = QDateTime::currentDateTime()) override;
+      const QDateTime &deletedAt) override;
   FileNode *getRoot() const override;
   QByteArray rootHash() const;
   bool verifyHashes() const;

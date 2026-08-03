@@ -1,13 +1,14 @@
 #pragma once
 #include "ClientTransport.h"
-#include "FileDb.h"
 #include "LocalFileStorage.h"
+#include "MerkleProtocolMessages.h"
 #include "MerkleSyncClient.h"
 #include "MerkleTree.h"
 #include "Messages.h"
+#include "UsersDb.h"
+#include "FSMetadata.h"
 #include <QString>
 #include <QTimer>
-#include "MerkleProtocolMessages.h"
 
 enum class SyncStrategy { Naive, Merkle };
 
@@ -52,15 +53,13 @@ public:
   void setupConnections();
   void scanFilesystemAndApplyChangesToDb();
   std::optional<QDateTime> writeFile(const QString &user, const QString &path,
-                 const QByteArray &contents);
-  std::optional<QDateTime> deleteFile(const QString &user, const QString &path);
+                                     const QByteArray &contents);
 
   LocalFileStorage *getStorage();
   const NegotiationState *getNegotiationState() const;
 
 Q_SIGNALS:
   void syncCompleted();
-  void negotiationCompleted(const NegotiationState&);
   void authenticated();
   void outboundFileCommandsReady();
 
@@ -99,15 +98,18 @@ private:
 
   // --- Local state (storage + DB + merkle tree) ---
   std::unique_ptr<LocalFileStorage> fileStorage;
-  FileDb database;
+  UsersDb usersDb;
+  FSMetadata database;
   std::unique_ptr<MerkleTree> merkleTree;
-  QByteArray hashContents(const QByteArray& contents);
-  void buildMerkleTree(const std::string& rootDir,const QString& username);
+  MerkleTree* getMerkleTree();
+  QByteArray hashContents(const QByteArray &contents);
   LocalChangeSet scanFilesystemForChanges() const;
   void applyChangesToDb(const LocalChangeSet &changes);
-  QList<QString> discoverNewFilesAndUpdateMtimes();
-  QSet<QString> discoverDeletedFiles();
-  void applyTombstone(const QString& path,const QDateTime& mtime);
+  void recordFile(const QString &username, const QString &path,
+                  const QDateTime &mtime, const QByteArray &hash);
+  void recordDeletion(const QString &username, const QString &path,
+                      const QDateTime &mtime);
+  void applyTombstone(const QString &path, const QDateTime &mtime);
 
   // --- Outbound command staging ---
   QHash<QString, SyncRequestMessage> commandsToSend;
@@ -118,7 +120,7 @@ private:
                                       const std::optional<QDateTime> &mtime);
   void stageUploadFor(const QString &path);
   void stageDownloadFor(const QString &path);
-  void stageDeleteFor(const QString &path,const QDateTime& deletedAt);
+  void stageDeleteFor(const QString &path, const QDateTime &deletedAt);
   void stageConflictResolution(const QString &path);
   void stageDirectoryUpload(const QString &dirPath);
   void stageNewFilesForSending(const QList<QString> &files);
@@ -138,7 +140,7 @@ private:
   bool currentlyNegotiatingFileDiffs = false;
   QList<QString> toDescend;
   void handleMerkleSyncResponse(MerkleSyncMessage *msg);
-  void handleNegotiationCompleted(const NegotiationState& state);
+  void handleNegotiationCompleted(const NegotiationState &state);
   MerkleSyncClient merkleSyncClient;
 
   // --- Sync response handling ---
@@ -152,8 +154,6 @@ private:
   // --- Misc ---
   void handleUnrecognized(Message *msg);
 };
-
-
 
 inline QDebug operator<<(QDebug dbg, const LocalChangeSet &changes) {
   QDebugStateSaver saver(dbg);
