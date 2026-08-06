@@ -1,9 +1,10 @@
 #include "FileServer.h"
 #include "LocalServerTransport.h"
 #include "Messages.h"
+#include "Hasher.h"
+
 #include "TcpServerTransport.h"
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <memory>
@@ -241,9 +242,9 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
   return response;
 }
 QByteArray FileServer::hashContents(const QByteArray &contents) {
-  QByteArray hash =
-      QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
-  return hash;
+  // QByteArray hash =
+  //     QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+  return Hasher::hash(contents);
 }
 
 void FileServer::recordFile(const QString &username, const QString &path,

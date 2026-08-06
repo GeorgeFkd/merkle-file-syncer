@@ -3,9 +3,10 @@
 #include "LocalFileStorage.h"
 #include "MerkleProtocolMessages.h"
 #include "Messages.h"
+#include "Hasher.h"
+
 #include "TcpClientTransport.h"
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDir>
 #include <memory>
 #include <qnamespace.h>
@@ -518,9 +519,7 @@ std::optional<QDateTime> FileClient::writeFile(const QString &user,
 }
 
 QByteArray FileClient::hashContents(const QByteArray &contents) {
-  QByteArray hash =
-      QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
-  return hash;
+  return Hasher::hash(contents);
 }
 
 void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {

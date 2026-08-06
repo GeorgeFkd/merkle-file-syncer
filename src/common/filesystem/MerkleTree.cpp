@@ -1,5 +1,5 @@
 #include "MerkleTree.h"
-#include <QCryptographicHash>
+#include "Hasher.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -113,21 +113,20 @@ bool MerkleTree::verifyNode(const FileNode *node) const {
 }
 
 QByteArray MerkleTree::hashChildren(const FileNode *node) const {
-  QCryptographicHash dirHash(QCryptographicHash::Sha256);
-  for (const auto &child : node->children) {
-    dirHash.addData(child->hash);
-  }
-  return dirHash.result();
+  auto hashes = node->children |
+                std::views::transform([](const auto &c) -> const QByteArray & {
+                  return c->hash;
+                });
+  return Hasher::hash(hashes);
 }
 
-bool MerkleTree::deleteFile(const QString& relativePath,
+bool MerkleTree::deleteFile(const QString &relativePath,
                             const QDateTime &deletedAt) {
   Q_ASSERT_X(root != nullptr, "MerkleTree::deleteFile", "root is null");
   Q_ASSERT_X(!relativePath.isEmpty(), "MerkleTree::deleteFile",
              "relativePath is empty");
 
-  auto parts =
-      relativePath.split('/', Qt::SkipEmptyParts);
+  auto parts = relativePath.split('/', Qt::SkipEmptyParts);
   FileNode *current = root.get();
 
   for (int i = 0; i < parts.size() - 1; i++) {
@@ -187,8 +186,7 @@ bool MerkleTree::addFile(const QString &relativePath, const QDateTime &mtime,
   Q_ASSERT_X(!relativePath.isEmpty(), "MerkleTree::addFile",
              "relativePath is empty");
 
-  auto parts =
-      relativePath.split('/', Qt::SkipEmptyParts);
+  auto parts = relativePath.split('/', Qt::SkipEmptyParts);
   FileNode *current = root.get();
   for (int i = 0; i < parts.size(); i++) {
     const auto &part = parts[i];
@@ -245,8 +243,7 @@ QByteArray MerkleTree::rootHash() const { return root->hash; }
 QByteArray MerkleTree::hashTombstoned(const FileNode *node) const {
   assert(node->isDeleted);
   QString path = getRelativePath(node);
-  return QCryptographicHash::hash(("tombstone:" + path).toUtf8(),
-                                  QCryptographicHash::Sha256);
+  return Hasher::hash(("tombstone" + path).toUtf8());
 }
 
 void MerkleTree::propagateHashDownward(FileNode *node) {

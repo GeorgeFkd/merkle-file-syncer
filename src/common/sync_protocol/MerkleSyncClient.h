@@ -2,7 +2,6 @@
 
 #include "MerkleProtocolMessages.h"
 #include "MerkleTree.h"
-#include "FileTree.h"
 #include <QObject>
 
 class MerkleSyncClient : public QObject {

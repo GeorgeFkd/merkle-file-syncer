@@ -1,5 +1,4 @@
 #include "MerkleSyncClient.h"
-#include "FileTree.h"
 #include "MerkleProtocolMessages.h"
 MerkleSyncClient::MerkleSyncClient(QObject *parent) : QObject(parent) {}
 
