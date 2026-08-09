@@ -1,4 +1,5 @@
 #include "ChunkingServer.h"
+#include "ChunkingProtocolMessages.h"
 #include "Messages.h"
 #include <QDebug>
 
@@ -128,12 +129,12 @@ void ChunkingServer::sendPart(const ClientId &clientId, const QString &path,
   msg.partNumber = partNumber;
   msg.chunkSize = it->transferProgress.chunkSize;
   msg.bytes = bytes;
-
+  msg.hash = hashContents(msg.bytes);
   auto msgOutCtx = ChunkingServerOutMsgCtx{clientId};
-  Q_EMIT(
-      sendMessage(std::make_shared<ChunkTransfer>(
-                      path, partNumber, it->transferProgress.chunkSize, bytes),
-                  msgOutCtx));
+  Q_EMIT(sendMessage(std::make_shared<ChunkTransfer>(
+                         path, partNumber, it->transferProgress.chunkSize,
+                         bytes, hashContents(msg.bytes)),
+                     msgOutCtx));
 }
 
 void ChunkingServer::handleChunkReceived(const ClientId &clientId,
@@ -142,7 +143,16 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   auto it = uploadStates.find(key);
   Q_ASSERT_X(it != uploadStates.end(), "handleChunkReceived",
              "no upload state for (clientId, path)");
-
+  if (!checkHashMatchesThatOfContent(msg->hash, msg->bytes)) {
+    qDebug() << "Hashes do not match send ACK that indicates failure";
+    auto msgOutCtx = ChunkingServerOutMsgCtx{clientId};
+    Q_EMIT(sendMessage(
+        std::make_shared<ACKChunkReceived>(msg->filepath, msg->partNumber,
+                                           "Hashes do not match.",
+                                           TransferFailure::BYTES_CORRUPTED),
+        msgOutCtx));
+    return;
+  }
   // it->transferProgress.currentPartNumber = msg.partNumber;
   const quint64 offset = static_cast<quint64>(msg->partNumber - 1) *
                          it->transferProgress.chunkSize;
@@ -159,9 +169,10 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
   }
 
   auto msgOutCtx = ChunkingServerOutMsgCtx{clientId};
-  Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
-                         msg->filepath, msg->partNumber, QString(), QString()),
-                     msgOutCtx));
+  Q_EMIT(sendMessage(
+      std::make_shared<ACKChunkReceived>(msg->filepath, msg->partNumber,
+                                         QString(), TransferFailure::NONE),
+      msgOutCtx));
 
   if (uploadFinished) {
     Q_EMIT uploadCompleted(clientId, msg->filepath);
@@ -174,10 +185,12 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
   Q_ASSERT_X(it != downloadStates.end(), "handleAckChunkOfDownload",
              "no download state for (clientId, path)");
 
-  if (!msg->failureType.isEmpty()) {
+  if (msg->failureType != TransferFailure::NONE) {
     qDebug() << "Download chunk failure:" << clientId << msg->path << "part"
-             << msg->partNumber << "type" << msg->failureType << "msg"
+             << msg->partNumber << "type" << toString(msg->failureType) << "msg"
              << msg->failureMsg;
+    qDebug() << "Resending part number " << msg->partNumber;
+    sendPart(clientId, msg->path, msg->partNumber);
     return;
   }
 

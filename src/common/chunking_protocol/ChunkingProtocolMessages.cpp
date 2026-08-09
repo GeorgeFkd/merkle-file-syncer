@@ -1,5 +1,5 @@
 #include "ChunkingProtocolMessages.h"
-
+#include "Hasher.h"
 bool TransferProgress::isComplete() const {
   return totalParts != 0 && currentPartNumber >= totalParts;
 }
@@ -22,4 +22,11 @@ bool TransferProgress::recordConfirmedPart(quint32 partNumber) {
   return done;
 }
 
-// --- ChunkTransfer (bytes base64 in JSON; temporary until binary channel) ---
+bool checkHashMatchesThatOfContent(const QByteArray &sentHash,
+                                   const QByteArray &content) {
+  auto actualHash = Hasher::hash(content);
+  return actualHash == sentHash;
+}
+QByteArray hashContents(const QByteArray &content) {
+  return Hasher::hash(content);
+}

@@ -94,16 +94,20 @@ void ChunkingClient::sendPart(const QString &path, quint32 partNumber) {
   msg.bytes = bytes;
 
   Q_EMIT(sendMessage(std::make_shared<ChunkTransfer>(
-      path, partNumber, static_cast<quint32>(bytes.size()), bytes)));
+      path, partNumber, static_cast<quint32>(bytes.size()), bytes,
+      hashContents(bytes))));
 }
 
 void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived *msg) {
   auto it = uploadStates.find(msg->path);
   assert(it != uploadStates.end());
-  if (!msg->failureType.isEmpty()) {
-    assert(!msg->failureMsg.isEmpty());
+  if (msg->failureType != TransferFailure::NONE) {
+    assert(!msg->failureMsg.isEmpty() &&
+           "When setting failureType also put failureMsg for details.");
     it->transferProgress.currentPhase = TransferPhase::FAILED;
     qDebug() << msg;
+    qDebug() << "Sending part number due to failure: " << msg->partNumber;
+    sendPart(msg->path, msg->partNumber);
     return;
   }
 
@@ -140,7 +144,15 @@ void ChunkingClient::handleDownloadSizeReceived(
 
 void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
   auto it = downloadStates.find(msg->filepath);
-  assert(it != downloadStates.end() && "download state was not found on client chunk receive.");
+  assert(it != downloadStates.end() &&
+         "download state was not found on client chunk receive.");
+  if (!checkHashMatchesThatOfContent(msg->hash, msg->bytes)) {
+    qDebug() << "Hashes do not match, sending ACK that indicates failure.";
+    Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
+        msg->filepath, msg->partNumber, "Hashes differ",
+        TransferFailure::BYTES_CORRUPTED)));
+    return;
+  }
   const quint64 chunkSz = it->transferProgress.chunkSize;
   const quint32 totalParts = it->transferProgress.totalParts;
   const quint32 nextPart = msg->partNumber + 1;
@@ -155,7 +167,7 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
   if (finishedDownloading) {
     downloadStates.remove(msg->filepath);
     Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
-        msg->filepath, msg->partNumber, QString(), QString())));
+        msg->filepath, msg->partNumber, QString(), TransferFailure::NONE)));
     Q_EMIT downloadCompleted(msg->filepath);
     return;
   }
@@ -168,7 +180,7 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
   }
 
   Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
-      msg->filepath, msg->partNumber, QString(), QString())));
+      msg->filepath, msg->partNumber, QString(), TransferFailure::NONE)));
 }
 
 void ChunkingClient::cancelUpload(const QString &path) {

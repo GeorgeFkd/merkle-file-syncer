@@ -152,35 +152,39 @@ public:
   static std::unique_ptr<AckChunkMessage> deserialize(const QJsonObject &obj);
 };
 
-
 class ChunkTransfer : public Message {
 public:
   QString filepath;
   quint32 partNumber = 0;
   quint32 chunkSize = 0;
   QByteArray bytes;
+  QByteArray hash;
 
   ChunkTransfer() = default;
   ChunkTransfer(QString filepath, quint32 partNumber, quint32 chunkSize,
-                QByteArray bytes)
+                QByteArray bytes, QByteArray hash)
       : filepath(std::move(filepath)), partNumber(partNumber),
-        chunkSize(chunkSize), bytes(std::move(bytes)) {}
+        chunkSize(chunkSize), bytes(std::move(bytes)), hash(std::move(hash)) {}
 
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<ChunkTransfer> deserialize(const QJsonObject &obj);
 };
 
+enum class TransferFailure { BYTES_CORRUPTED, NONE };
+QString toString(TransferFailure tf);
+TransferFailure fromString(TransferFailure tf);
+
 class ACKChunkReceived : public Message {
 public:
   QString path;
   quint32 partNumber = 0;
   QString failureMsg;
-  QString failureType;
+  TransferFailure failureType;
 
   ACKChunkReceived() = default;
   ACKChunkReceived(QString path, quint32 partNumber, QString failureMsg,
-                   QString failureType)
+                   TransferFailure failureType)
       : path(std::move(path)), partNumber(partNumber),
         failureMsg(std::move(failureMsg)), failureType(std::move(failureType)) {
   }
@@ -263,23 +267,3 @@ public:
   QByteArray serialize() const override;
   static std::unique_ptr<CancelTransfer> deserialize(const QJsonObject &obj);
 };
-
-inline QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack) {
-  QDebugStateSaver saver(dbg);
-  dbg.nospace() << "ACKChunkReceived(path=" << ack.path
-                << ", partNumber=" << ack.partNumber
-                << ", failureType=" << ack.failureType
-                << ", failureMsg=" << ack.failureMsg << ")";
-  return dbg;
-}
-
-inline QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
-  QDebugStateSaver saver(dbg);
-  dbg.nospace() << "SyncRequestMessage(path=" << msg.path
-                << ", contentsSize=" << msg.contents.size()
-                << ", operationTime=" << msg.operationTime
-                << ", operationType=" << static_cast<int>(msg.operationType)
-                << ", operationStatus=" << static_cast<int>(msg.operationStatus)
-                << ")";
-  return dbg;
-}

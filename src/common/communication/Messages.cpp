@@ -377,6 +377,7 @@ QByteArray ChunkTransfer::serialize() const {
   obj["partNumber"] = static_cast<qint64>(partNumber);
   obj["chunkSize"] = static_cast<qint64>(chunkSize);
   obj["bytes"] = QString::fromLatin1(bytes.toBase64());
+  obj["hash"] = QString::fromLatin1(hash.toBase64());
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<ChunkTransfer>
@@ -387,9 +388,30 @@ ChunkTransfer::deserialize(const QJsonObject &obj) {
   msg->partNumber = static_cast<quint32>(obj["partNumber"].toInteger());
   msg->chunkSize = static_cast<quint32>(obj["chunkSize"].toInteger());
   msg->bytes = QByteArray::fromBase64(obj["bytes"].toString().toLatin1());
+  msg->hash = QByteArray::fromBase64(obj["hash"].toString().toLatin1());
   return msg;
 }
 
+QString toString(TransferFailure tf) {
+  if (tf == TransferFailure::BYTES_CORRUPTED) {
+    return "bytes_corrupted";
+  }
+  if (tf == TransferFailure::NONE) {
+    return "none";
+  }
+
+  assert(false);
+}
+
+TransferFailure fromString(const QString &tf) {
+  if (tf == "bytes_corrupted") {
+    return TransferFailure::BYTES_CORRUPTED;
+  }
+  if(tf == "none"){
+    return TransferFailure::NONE;
+  }
+  assert(false);
+}
 // --- ACKChunkReceived ---
 MessageType ACKChunkReceived::type() const { return MessageType::AckChunk; }
 QByteArray ACKChunkReceived::serialize() const {
@@ -399,7 +421,7 @@ QByteArray ACKChunkReceived::serialize() const {
   obj["path"] = path;
   obj["partNumber"] = static_cast<qint64>(partNumber);
   obj["failureMsg"] = failureMsg;
-  obj["failureType"] = failureType;
+  obj["failureType"] = toString(failureType);
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<ACKChunkReceived>
@@ -409,7 +431,7 @@ ACKChunkReceived::deserialize(const QJsonObject &obj) {
   msg->path = obj["path"].toString();
   msg->partNumber = static_cast<quint32>(obj["partNumber"].toInteger());
   msg->failureMsg = obj["failureMsg"].toString();
-  msg->failureType = obj["failureType"].toString();
+  msg->failureType = fromString(obj["failureType"].toString());
   return msg;
 }
 
@@ -517,4 +539,24 @@ CancelTransfer::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
   return msg;
+}
+
+QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack) {
+  QDebugStateSaver saver(dbg);
+  dbg.nospace() << "ACKChunkReceived(path=" << ack.path
+                << ", partNumber=" << ack.partNumber
+                << ", failureType=" << toString(ack.failureType)
+                << ", failureMsg=" << ack.failureMsg << ")";
+  return dbg;
+}
+
+QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
+  QDebugStateSaver saver(dbg);
+  dbg.nospace() << "SyncRequestMessage(path=" << msg.path
+                << ", contentsSize=" << msg.contents.size()
+                << ", operationTime=" << msg.operationTime
+                << ", operationType=" << static_cast<int>(msg.operationType)
+                << ", operationStatus=" << static_cast<int>(msg.operationStatus)
+                << ")";
+  return dbg;
 }

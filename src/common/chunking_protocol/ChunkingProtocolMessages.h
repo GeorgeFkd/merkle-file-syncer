@@ -1,5 +1,5 @@
 #pragma once
-#include "Messages.h" 
+#include "Messages.h"
 #include <QByteArray>
 #include <QDebug>
 #include <QJsonDocument>
@@ -27,4 +27,6 @@ public:
   bool recordConfirmedPart(quint32 partNumber);
 };
 
-
+bool checkHashMatchesThatOfContent(const QByteArray &hash,
+                                   const QByteArray &content);
+QByteArray hashContents(const QByteArray& content);

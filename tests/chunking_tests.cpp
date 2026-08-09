@@ -2,10 +2,12 @@
 #include "ChunkingClient.h"
 #include "ChunkingProtocolMessages.h"
 #include "ChunkingServer.h"
+#include "Messages.h"
 
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
+#include <QRandomGenerator>
 #include <QString>
 
 #include <gtest/gtest.h>
@@ -16,6 +18,30 @@
 #include <vector>
 
 namespace {
+
+double uniform01() { return QRandomGenerator::global()->generateDouble(); }
+QByteArray corrupt(const QByteArray &in, int i) {
+  if (in.isEmpty())
+    return in;
+
+  QByteArray out = in;                       // detached copy
+  out[i] = static_cast<char>(out[i] ^ 0xFF); // flip all bits
+  return out;
+}
+struct FailureInjector {
+  bool enabled;
+  float probabilityBase; // was clientProbabilityOfFailure /
+                         // serverProbabilityOfFailure
+
+  // returns true if this ChunkTransfer should be corrupted
+  bool shouldCorrupt(const Message *msg) {
+    if (!enabled || msg->type() != MessageType::ChunkTransfer)
+      return false;
+    float probability = 1.0f / probabilityBase;
+    probabilityBase *= 2;
+    return uniform01() < probability;
+  }
+};
 
 using ClientId = QString;
 
@@ -96,24 +122,43 @@ private:
 //
 
 void wireClientServer(ChunkingClient &client, ChunkingServer &server,
-                      const ClientId &clientId) {
+                      const ClientId &clientId, bool injectFailures) {
   // client -> server: client sends context-less; inject clientId for the server
+  auto clientInj =
+      std::make_shared<FailureInjector>(FailureInjector{injectFailures, 1.0f});
+  auto serverInj =
+      std::make_shared<FailureInjector>(FailureInjector{injectFailures, 1.0f});
+  auto clientProbabilityOfFailure = std::make_shared<float>(1.0);
   QObject::connect(
       &client, &ChunkingClient::sendMessage, &server,
-      [&server, clientId](std::shared_ptr<Message> msg) {
+      [&server, clientId, injectFailures, clientInj,
+       clientProbabilityOfFailure](std::shared_ptr<Message> msg) {
+        if (injectFailures) {
+          if (clientInj->shouldCorrupt(msg.get())) {
+            auto ct = static_cast<ChunkTransfer *>(msg.get());
+            ct->bytes = corrupt(ct->bytes, 0);
+          }
+        }
         server.onMessage(msg.get(), ChunkingServerInMsgCtx{clientId});
       },
       Qt::DirectConnection);
 
   // server -> client: server sends with clientId; client ignores it
+  auto serverProbabilityOfFailure = std::make_shared<float>(1.0);
   QObject::connect(
       &server, &ChunkingServer::sendMessage, &client,
-      [&client](std::shared_ptr<Message> msg,ChunkingServerOutMsgCtx msgCtx) {
+      [&client, injectFailures, serverInj, serverProbabilityOfFailure](
+          std::shared_ptr<Message> msg, ChunkingServerOutMsgCtx msgCtx) {
+        if (injectFailures) {
+          if (serverInj->shouldCorrupt(msg.get())) {
+            auto ct = static_cast<ChunkTransfer *>(msg.get());
+            ct->bytes = corrupt(ct->bytes, 0);
+          }
+        }
         client.onMessage(msg.get());
       },
       Qt::DirectConnection);
 }
-
 
 } // namespace
 
@@ -182,7 +227,7 @@ RC_GTEST_PROP(ChunkRoundTrip, uploadThenDownloadPreservesBytes, ()) {
   QObject::connect(&client, &ChunkingClient::downloadCompleted, &client,
                    [&downloadDone](const QString &) { downloadDone = true; });
 
-  wireClientServer(client, server, clientId);
+  wireClientServer(client, server, clientId, true);
 
   client.startUpload(path);
   qDebug() << "upload: orig" << original.size() << "server"
