@@ -267,3 +267,6 @@ public:
   QByteArray serialize() const override;
   static std::unique_ptr<CancelTransfer> deserialize(const QJsonObject &obj);
 };
+
+QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg);
+QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack);

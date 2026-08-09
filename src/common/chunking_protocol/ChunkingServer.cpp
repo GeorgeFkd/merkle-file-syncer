@@ -145,6 +145,7 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
              "no upload state for (clientId, path)");
   if (!checkHashMatchesThatOfContent(msg->hash, msg->bytes)) {
     qDebug() << "Hashes do not match send ACK that indicates failure";
+    it->transferProgress.recordRetry(msg->partNumber);
     auto msgOutCtx = ChunkingServerOutMsgCtx{clientId};
     Q_EMIT(sendMessage(
         std::make_shared<ACKChunkReceived>(msg->filepath, msg->partNumber,

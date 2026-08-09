@@ -22,6 +22,14 @@ bool TransferProgress::recordConfirmedPart(quint32 partNumber) {
   return done;
 }
 
+void TransferProgress::recordRetry(quint32 partNumber) {
+  if(retriesPerPart.contains(partNumber)){
+    retriesPerPart[partNumber] += 1;
+  }else {
+    retriesPerPart.insert(partNumber,1); 
+  }
+}
+
 bool checkHashMatchesThatOfContent(const QByteArray &sentHash,
                                    const QByteArray &content) {
   auto actualHash = Hasher::hash(content);

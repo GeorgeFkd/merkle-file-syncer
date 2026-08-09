@@ -148,6 +148,7 @@ void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
          "download state was not found on client chunk receive.");
   if (!checkHashMatchesThatOfContent(msg->hash, msg->bytes)) {
     qDebug() << "Hashes do not match, sending ACK that indicates failure.";
+    it->transferProgress.recordRetry(msg->partNumber);
     Q_EMIT(sendMessage(std::make_shared<ACKChunkReceived>(
         msg->filepath, msg->partNumber, "Hashes differ",
         TransferFailure::BYTES_CORRUPTED)));

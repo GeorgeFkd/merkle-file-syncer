@@ -20,11 +20,15 @@ public:
   quint32 currentPartNumber = 0;
   quint32 totalParts = 0;
   quint64 chunkSize = 0;
+  quint8 retries = 0;
   TransferPhase currentPhase = TransferPhase::NOT_STARTED;
 
   bool isComplete() const;
   quint8 progressPercent() const;
   bool recordConfirmedPart(quint32 partNumber);
+  void recordRetry(quint32 partNumber);
+
+  QHash<quint32,quint8> retriesPerPart;
 };
 
 bool checkHashMatchesThatOfContent(const QByteArray &hash,
