@@ -1,12 +1,13 @@
 #pragma once
+#include "FSMetadata.h"
 #include "FileStorage.h"
 #include "MerkleSyncServer.h"
 #include "MerkleTree.h"
 #include "Messages.h"
+#include "NaiveSyncServer.h"
 #include "ServerTransport.h"
 #include "SessionRegistry.h"
 #include "UsersDb.h"
-#include "FSMetadata.h"
 #include <QLocalServer>
 #include <QLocalSocket>
 
@@ -30,6 +31,9 @@ public:
   // meant to be used in testing only
   bool writeFile(const QString &user, const QString &file,
                  const QByteArray &contents, const QDateTime &mtime);
+
+Q_SIGNALS:
+  void sendMessage(const Message &msg);
 
 private:
   // --- Server lifecycle / connections ---
@@ -87,7 +91,8 @@ private:
   AckChunkMessage handleChunkUpload(ChunkTransferMessage *msg);
   void handleAckChunk(AckChunkMessage *msg);
   // --- Listing ---
-  ListResponseMessage handleListRequest(ListRequestMessage *msg);
+  void handleListRequest(ListRequestMessage *msg);
+  NaiveSyncServer naiveSyncServer;
 
   // --- Merkle negotiation ---
   void handleMerkleSyncRequest(MerkleSyncMessage *msg);

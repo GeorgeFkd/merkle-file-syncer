@@ -27,7 +27,8 @@ target_link_libraries(
           fs_metadata
           Qt6::Core
           Qt6::Network
-merkle_protocol_server)
+merkle_protocol_server
+naive_protocol_server)
 set_target_properties(merkle_server_lib PROPERTIES AUTOMOC ON)
 
 # qt_add_executable(merkle_server main.cpp)

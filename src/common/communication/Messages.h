@@ -109,9 +109,12 @@ struct FileEntry {
   bool deleted = false;
 };
 
+QDebug operator<<(QDebug dbg,const FileEntry& entry);
+
 class ListRequestMessage : public Message {
 public:
   QString directory; // if empty we list all of the user files
+  bool useMerkle = true;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<ListRequestMessage>
@@ -270,3 +273,26 @@ public:
 
 QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg);
 QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack);
+
+
+//TODO: should later be in a types module or sth
+struct DeletionEntry {
+  QString path;
+  QDateTime deletedAt;
+};
+
+struct NodesDiff {
+  QList<QPair<bool, QString>> onlyInLeft;
+  QList<QPair<bool, QString>> onlyInRight;
+  QList<QString> modified;
+  QList<DeletionEntry> deletionWinsLeft;
+  QList<DeletionEntry> deletionWinsRight;
+};
+
+struct NegotiationState {
+  NodesDiff diffEntries;
+  QList<QString> directoriesToCheckWithServer;
+};
+
+
+

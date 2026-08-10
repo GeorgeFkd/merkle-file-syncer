@@ -9,8 +9,6 @@
 class FileTransferClient : public QObject {
   Q_OBJECT
 public:
-  // this will become a signal
-
   FileTransferClient(FileStorage *storage,
                      const QString &user, QObject *parent = nullptr);
 

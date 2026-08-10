@@ -11,7 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Network Sql)
-
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 qt_standard_project_setup()
 
 add_subdirectory(src/common)

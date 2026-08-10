@@ -1,7 +1,7 @@
 #include "FileServer.h"
+#include "Hasher.h"
 #include "LocalServerTransport.h"
 #include "Messages.h"
-#include "Hasher.h"
 
 #include "TcpServerTransport.h"
 #include <QCoreApplication>
@@ -32,6 +32,17 @@ FileServer::~FileServer() {}
 
 void FileServer::setupConnections() {
   setupSocketConnections();
+
+  QObject::connect(
+      this, &FileServer::sendMessage, this, [this](const Message &msg) {
+        auto socket = socketToTokenMap.key(msg.token, nullptr);
+        if (!socket) {
+          qDebug() << "generic message send request could not be sent.";
+          return;
+        }
+        transport->send(socket, msg);
+      });
+
   QObject::connect(&merkleSyncServer, &MerkleSyncServer::messageSendRequest,
                    this,
                    [this](ConnectionId conn, MerkleProtocolMessage proto) {
@@ -43,6 +54,16 @@ void FileServer::setupConnections() {
                      auto wire = toWireMessage(proto);
                      wire.token = conn;
                      transport->send(socket, wire);
+                   });
+  QObject::connect(&naiveSyncServer, &NaiveSyncServer::sendMessage, this,
+                   [this](ListResponseMessage msg, ConnectionId conn) {
+                     auto socket = socketToTokenMap.key(conn, nullptr);
+                     if (!socket) {
+                       qDebug()
+                           << "could not send message of Naive Sync Server";
+                       return;
+                     }
+                     transport->send(socket, msg);
                    });
 }
 
@@ -98,8 +119,8 @@ void FileServer::dispatch(QIODevice *socket, Message *msg) {
     break;
   }
   case MessageType::ListRequest: {
-    auto resp = handleListRequest(static_cast<ListRequestMessage *>(msg));
-    transport->send(socket, resp);
+    auto actualMsg = static_cast<ListRequestMessage *>(msg);
+    handleListRequest(actualMsg);
     break;
   }
   case MessageType::ChunkTransfer: {
@@ -270,12 +291,17 @@ void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
                                  msg->token);
 }
 
-ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
+void FileServer::handleListRequest(ListRequestMessage *msg) {
   auto username = getUserFrom(msg);
   ListResponseMessage response;
+  response.token = msg->token;
+  if (!msg->useMerkle) {
+    naiveSyncServer.handleRequest(msg, msg->token, &database, username);
+    return ;
+  }
 
   bool clientWantsEverything = msg->directory.isEmpty();
-  auto files = fileStorage->listFiles(username);
+  auto files = database.allTrackedFiles(username);
   for (const auto &path : files) {
     bool pathIsInRequestedDir = path.startsWith(msg->directory + "/");
     if (!clientWantsEverything && !pathIsInRequestedDir) {
@@ -296,7 +322,8 @@ ListResponseMessage FileServer::handleListRequest(ListRequestMessage *msg) {
     response.entries.append({path, it.value(), true});
   }
 
-  return response;
+  Q_EMIT(sendMessage(response));
+  return;
 }
 
 SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {

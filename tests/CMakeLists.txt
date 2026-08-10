@@ -66,12 +66,16 @@ target_link_libraries(
             filesutil
             merkle_protocol_client
             merkle_protocol_server
+            naive_protocol_client
+            naive_protocol_server
+            fs_metadata
             rapidcheck
             Qt6::Core
 )
 target_include_directories(protocol_tests PRIVATE ${TEST_COMMON_INCLUDES}
 ${CMAKE_SOURCE_DIR}/src/common/filesystem
-${CMAKE_SOURCE_DIR}/src/common/sync_protocol)
+${CMAKE_SOURCE_DIR}/src/common/sync_protocol
+${CMAKE_SOURCE_DIR}/src/common/fs_metadata)
 set_target_properties(protocol_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(protocol_tests PROPERTIES ENVIRONMENT "RC_PARAMS=max_success=500 max_size=300")
 

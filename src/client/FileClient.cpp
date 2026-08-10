@@ -1,16 +1,15 @@
 #include "FileClient.h"
+#include "Hasher.h"
 #include "LocalClientTransport.h"
 #include "LocalFileStorage.h"
 #include "MerkleProtocolMessages.h"
 #include "Messages.h"
-#include "Hasher.h"
 
 #include "TcpClientTransport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <memory>
 #include <qnamespace.h>
-#include <tuple>
 
 FileClient::FileClient() { fileStorage = std::make_unique<LocalFileStorage>(); }
 
@@ -64,6 +63,16 @@ void FileClient::setupConnections() {
                      msg.token = token;
                      transport->send(msg);
                    });
+  QObject::connect(&naiveSyncClient, &NaiveSyncClient::sendMessage, this,
+                   [this](ListRequestMessage msg) {
+                     awaitingListResponse = true;
+                     msg.token = token;
+                     msg.useMerkle = false;
+                     transport->send(msg);
+                   });
+
+  QObject::connect(&naiveSyncClient, &NaiveSyncClient::negotiationCompleted,
+                   this, &FileClient::handleNegotiationCompleted);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::handleNegotiationCompleted);
   startTimer();
@@ -162,63 +171,6 @@ void FileClient::handleMerkleDirectoryListing(ListResponseMessage *msg) {
   return;
 }
 
-void FileClient::handleNaiveListing(ListResponseMessage *msg) {
-  NegotiationState state;
-
-  QSet<QString> serverPaths;
-  for (const auto &entry : msg->entries) {
-    if (!entry.deleted)
-      serverPaths.insert(entry.path);
-  }
-
-  // --- server-reported entries: compare against reconciled local DB ---
-  for (const auto &entry : msg->entries) {
-    if (entry.deleted) {
-      // server deletion vs local
-      auto localMtime = database.readMtime(username, entry.path);
-      if (localMtime.has_value() && localMtime.value() > entry.mtime) {
-        state.diffEntries.onlyInLeft.append(
-            {true, entry.path}); // client newer -> upload
-      } else {
-        state.diffEntries.deletionWinsRight.append({entry.path, entry.mtime});
-      }
-    } else {
-      auto localMtime = database.readMtime(username, entry.path);
-      if (!localMtime.has_value()) {
-        state.diffEntries.onlyInRight.append(
-            {true, entry.path}); // server-only -> download
-      } else if (entry.mtime > localMtime.value()) {
-        state.diffEntries.modified.append(
-            entry.path); // server newer -> download
-      } else if (localMtime.value() > entry.mtime) {
-        state.diffEntries.onlyInLeft.append(
-            {true, entry.path}); // client newer -> upload
-      }
-    }
-  }
-
-  // --- local entries the server didn't report ---
-  // reconciled DB already reflects the filesystem (scan+apply ran in naiveTick)
-  for (const auto &path : database.allTrackedFiles(username)) {
-    if (!serverPaths.contains(path)) {
-      state.diffEntries.onlyInLeft.append({true, path}); // local-only -> upload
-    }
-  }
-
-  // --- locally-deleted (tombstones) the server still has ---
-  auto tombstones = database.allTombstones(username);
-  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-    const QString &path = it.key();
-    const QDateTime &deletedAt = it.value();
-    if (serverPaths.contains(path)) {
-      state.diffEntries.deletionWinsLeft.append({path, deletedAt});
-    }
-  }
-
-  // I will add the signal back in when we extract the strategy to a component
-  handleNegotiationCompleted(state);
-}
-
 void FileClient::handleListResponse(ListResponseMessage *msg) {
   awaitingListResponse = false;
   qDebug() << "Handling list response from server with" << msg->entries.size()
@@ -228,7 +180,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     handleMerkleDirectoryListing(msg);
     return;
   }
-  handleNaiveListing(msg);
+  naiveSyncClient.handleListingResponse(msg, &database, username);
 }
 
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
@@ -403,10 +355,11 @@ void FileClient::naiveTick() {
 
   auto result = scanFilesystemForChanges();
   applyChangesToDb(result);
-  ListRequestMessage req;
-  req.token = token;
-  awaitingListResponse = true;
-  transport->send(req);
+  naiveSyncClient.startNegotiation();
+  // ListRequestMessage req;
+  // req.token = token;
+  // awaitingListResponse = true;
+  // transport->send(req);
 }
 
 LocalChangeSet FileClient::scanFilesystemForChanges() const {
@@ -541,6 +494,8 @@ void FileClient::stageDirectoryUpload(const QString &dirPath) {
 
 void FileClient::requestDirectoryList(const QString &dirPath) {
   ListRequestMessage req;
+  qDebug() << "Directory requested is: " << dirPath;
+  req.useMerkle = syncStrategy == SyncStrategy::Merkle;
   req.token = token;
   req.directory = dirPath;
   pendingDirectoryRequests++;
@@ -557,7 +512,7 @@ void FileClient::stageDeleteFor(const QString &path,
   msg.operationType = FileOperationType::Delete;
   msg.operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
-  MerkleTree* merkleTree = getMerkleTree();
+  MerkleTree *merkleTree = getMerkleTree();
   if (merkleTree) {
     merkleTree->deleteFile(path, deletedAt);
   }

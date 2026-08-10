@@ -18,7 +18,7 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/hashing
          )
 target_link_libraries(
-  merkle_client_lib PRIVATE messages hashing fs_metadata filesutil storage users_db Qt6::Core merkle_protocol_client
+  merkle_client_lib PRIVATE messages hashing fs_metadata filesutil storage users_db Qt6::Core merkle_protocol_client naive_protocol_client
                             Qt6::Network)
 qt_add_executable(merkle_client main.cpp)
 

@@ -3,6 +3,7 @@
 #include "LocalFileStorage.h"
 #include "MerkleProtocolMessages.h"
 #include "MerkleSyncClient.h"
+#include "NaiveSyncClient.h"
 #include "MerkleTree.h"
 #include "Messages.h"
 #include "UsersDb.h"
@@ -23,10 +24,12 @@ enum class ClientState {
 // Produced by a pure scan; consumed by an apply step that reconciles the DB
 // and merkle tree. New/modified carry the filesystem mtime; deleted carry the
 // time the deletion was detected (or its recorded tombstone time).
+//TODO: Add inodes so i can later detect renames
+using FileChangeMetadata = QPair<QString,QDateTime>; 
 struct LocalChangeSet {
-  QList<QPair<QString, QDateTime>> newFiles;
-  QList<QPair<QString, QDateTime>> modifiedFiles;
-  QList<QPair<QString, QDateTime>> deletedFiles;
+  QList<FileChangeMetadata> newFiles;
+  QList<FileChangeMetadata> modifiedFiles;
+  QList<FileChangeMetadata> deletedFiles;
 };
 
 struct FileClientConfig {
@@ -130,11 +133,11 @@ private:
   // --- Server file listing (naive pull + merkle apply expansion) ---
   bool awaitingListResponse = false;
   bool inMerkleApply = false;
+
   int pendingDirectoryRequests = 0;
   void requestDirectoryList(const QString &dirPath);
   void handleListResponse(ListResponseMessage *msg);
   void handleMerkleDirectoryListing(ListResponseMessage *msg);
-  void handleNaiveListing(ListResponseMessage *msg);
 
   // --- Merkle negotiation ---
   bool currentlyNegotiatingFileDiffs = false;
@@ -142,6 +145,7 @@ private:
   void handleMerkleSyncResponse(MerkleSyncMessage *msg);
   void handleNegotiationCompleted(const NegotiationState &state);
   MerkleSyncClient merkleSyncClient;
+  NaiveSyncClient naiveSyncClient;
 
   // --- Sync response handling ---
   void handleSyncResponse(SyncRequestMessage *msg);

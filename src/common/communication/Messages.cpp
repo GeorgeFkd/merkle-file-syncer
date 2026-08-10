@@ -242,6 +242,7 @@ QByteArray ListRequestMessage::serialize() const {
   obj["type"] = "list_request";
   obj["token"] = token;
   obj["directory"] = directory;
+  obj["use_merkle"] = useMerkle;
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
@@ -250,6 +251,7 @@ ListRequestMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<ListRequestMessage>();
   msg->token = obj["token"].toString();
   msg->directory = obj["directory"].toString();
+  msg->useMerkle = obj["use_merkle"].toBool();
   return msg;
 }
 
@@ -558,5 +560,11 @@ QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
                 << ", operationType=" << static_cast<int>(msg.operationType)
                 << ", operationStatus=" << static_cast<int>(msg.operationStatus)
                 << ")";
+  return dbg;
+}
+
+QDebug operator<<(QDebug dbg, const FileEntry& entry) {
+  QDebugStateSaver saver(dbg);
+  dbg.nospace() << "FileEntry: mtime: " << entry.mtime << "path: " << entry.path << "deleted: " << entry.deleted;
   return dbg;
 }

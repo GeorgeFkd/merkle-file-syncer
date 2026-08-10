@@ -6,23 +6,6 @@
 #include <QPair>
 #include <QString>
 #include "Messages.h"
-struct DeletionEntry {
-  QString path;
-  QDateTime deletedAt;
-};
-
-struct NodesDiff {
-  QList<QPair<bool, QString>> onlyInLeft;
-  QList<QPair<bool, QString>> onlyInRight;
-  QList<QString> modified;
-  QList<DeletionEntry> deletionWinsLeft;
-  QList<DeletionEntry> deletionWinsRight;
-};
-
-struct NegotiationState {
-  NodesDiff diffEntries;
-  QList<QString> directoriesToCheckWithServer;
-};
 
 struct MerkleProtocolMessage {
   int phase;
