@@ -46,11 +46,7 @@ DiffBucket classifyPath(const SideState &left, const SideState &right) {
 
   // --- both live ---
   if (left.isDirectory && right.isDirectory) {
-    // NOTE: currently compares by mtime; hashes are not yet used in the
-    // decision. Directories that "differ" are detected by the caller (merkle)
-    // via its own hash traversal before reaching here.
-    if (left.mtime.value() == right.mtime.value())
-      return DiffBucket::InSync;
+    //directories are further recursed
     return DiffBucket::NeedsDirectoryCheck;
   }
 

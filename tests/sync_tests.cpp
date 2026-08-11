@@ -161,7 +161,7 @@ protected:
   
   void addMinimumDelayForTimestampOrdering() {
     QThread::msleep(
-        2); // ensure subsequent operations have strictly newer wall-clock time
+        5); // ensure subsequent operations have strictly newer wall-clock time
   }
 
   void waitForSync(FileClient &client) {
@@ -290,6 +290,7 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
                   ->readFile(this->username, "subdir/file2.txt")
                   .has_value());
 
+  // this->addMinimumDelayForTimestampOrdering();
   // delete both through storage; the scan detects both absences on next tick.
   ASSERT_TRUE(this->client->getStorage()->deleteFile(this->username,
                                                      "subdir/file1.txt"));
