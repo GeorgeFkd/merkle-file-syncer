@@ -326,7 +326,7 @@ protected:
 
   void addMinimumDelayForTimestampOrdering() {
     QThread::msleep(
-        1); // ensure subsequent operations have strictly newer wall-clock time
+        5); // ensure subsequent operations have strictly newer wall-clock time
   }
 
   void TearDown() override {

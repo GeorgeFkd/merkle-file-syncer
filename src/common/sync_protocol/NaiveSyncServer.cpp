@@ -11,12 +11,15 @@ void NaiveSyncServer::handleRequest(ListRequestMessage* msg, ConnectionId connId
     for (const auto &path : files) {
       auto mtime = updatedDb->readMtime(username, path);
       assert(mtime.has_value() && "File in storage must have a DB mtime entry");
-      response.entries.append({path, mtime.value(), false});
+      auto hash = updatedDb->readHash(username,path);
+      assert(hash.has_value() && "File in storage must have DB hash entry");
+      response.entries.append({path, mtime.value(), false,hash.value()});
     }
 
     auto tombstones = updatedDb->allTombstones(username);
     for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
       const QString &path = it.key();
+      //we dont need hashes for tombstoned entries
       response.entries.append({path, it.value(), true});
     }
     Q_EMIT(sendMessage(response,connId));

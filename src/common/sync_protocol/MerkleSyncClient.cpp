@@ -98,9 +98,13 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
             {isFileFor(left, right), path});
         break;
       case DiffBucket::ModifiedWinsLeft:
+        // negotiationState.diffEntries.modified.append(path);
+        negotiationState.diffEntries.modifiedWinsLeft.append(path);
+        break;
       case DiffBucket::ModifiedWinsRight:
         // TODO: split into directional buckets once the applier consumes them.
-        negotiationState.diffEntries.modified.append(path);
+        // negotiationState.diffEntries.modified.append(path);
+        negotiationState.diffEntries.modifiedWinsRight.append(path);
         break;
       case DiffBucket::DeletionWinsLeft:
         negotiationState.diffEntries.deletionWinsLeft.append(

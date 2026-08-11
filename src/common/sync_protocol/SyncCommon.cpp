@@ -45,24 +45,26 @@ DiffBucket classifyPath(const SideState &left, const SideState &right) {
   }
 
   // --- both live ---
+
   if (left.isDirectory && right.isDirectory) {
-    //directories are further recursed
+    // directories are further recursed
     return DiffBucket::NeedsDirectoryCheck;
   }
 
-  // both live files. Difference is decided by mtime for now (hashes not yet
-  // threaded into the decision — TODO: use hash equality once naive carries
-  // hashes, so same-mtime-different-content is detectable).
-  if (left.mtime.value() == right.mtime.value()) {
-    return DiffBucket::InSync; // same mtime -> treat as in sync
+  if (!left.hash.isEmpty() && left.hash == right.hash) {
+    return DiffBucket::InSync; // same content, regardless of mtime
   }
+
   if (left.mtime.value() > right.mtime.value()) {
     return DiffBucket::ModifiedWinsLeft; // client newer -> push
+  } else if (right.mtime.value() > left.mtime.value()) {
+    return DiffBucket::ModifiedWinsRight;
+  } else {
+    if (left.mtime.value() == right.mtime.value()) {
+      qWarning()
+          << "classifyPath: equal mtime, differing content — unresolvable at "
+             "millisecond resolution, applying deterministic tiebreak";
+    }
+    return DiffBucket::ModifiedWinsRight;
   }
-  if (left.mtime.value() == right.mtime.value()) {
-    qWarning()
-        << "classifyPath: equal mtime, differing content — unresolvable at "
-           "millisecond resolution, applying deterministic tiebreak";
-  }
-  return DiffBucket::ModifiedWinsRight;
 }

@@ -539,7 +539,8 @@ void FileClient::handleNegotiationCompleted(
   qDebug() << "Tree Diff:";
   qDebug() << "(L) " << negotiationState.diffEntries.onlyInLeft;
   qDebug() << "(R) " << negotiationState.diffEntries.onlyInRight;
-  qDebug() << "(M) " << negotiationState.diffEntries.modified;
+  qDebug() << "(ML) " << negotiationState.diffEntries.modifiedWinsLeft;
+  qDebug() << "(MR) " << negotiationState.diffEntries.modifiedWinsRight;
   qDebug() << "(DL) " << negotiationState.diffEntries.deletionWinsLeft;
   qDebug() << "(DR) " << negotiationState.diffEntries.deletionWinsRight;
 
@@ -562,17 +563,29 @@ void FileClient::handleNegotiationCompleted(
     }
     resolveServerHasFileClientDoesnt(path);
   }
-  for (const auto &path : negotiationState.diffEntries.modified) {
-    // modified should only contain files at this point — directories
-    // were resolved during negotiation via directoriesToCheckWithServer
-    {
-      auto found = getMerkleTree()->find(path);
-      assert(found.has_value());
-      auto &[node, isTombstoned] = *found;
-      assert(node->type == FileType::File);
-    }
-    stageConflictResolution(path);
+
+  // client's version is newer -> upload it (overwrites the server's stale copy)
+  for (const auto &path : negotiationState.diffEntries.modifiedWinsLeft) {
+    stageUploadFor(path);
   }
+
+  // server's version is newer -> download it (overwrites our stale copy)
+  for (const auto &path : negotiationState.diffEntries.modifiedWinsRight) {
+    stageDownloadFor(path);
+  }
+
+
+  // for (const auto &path : negotiationState.diffEntries.modified) {
+  //   // modified should only contain files at this point — directories
+  //   // were resolved during negotiation via directoriesToCheckWithServer
+  //   {
+  //     auto found = getMerkleTree()->find(path);
+  //     assert(found.has_value());
+  //     auto &[node, isTombstoned] = *found;
+  //     assert(node->type == FileType::File);
+  //   }
+  //   stageConflictResolution(path);
+  // }
 
   for (const auto &[path, deletedAt] :
        negotiationState.diffEntries.deletionWinsLeft) {

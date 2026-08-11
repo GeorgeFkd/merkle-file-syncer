@@ -13,10 +13,18 @@ std::optional<QString> pathFromKey(const QString &id, const QString &key) {
 }
 } // namespace
 
-std::optional<QDateTime> FSMetadata::readMtime(const QString &user,
+std::optional<QDateTime> FSMetadata::readMtime(const QString &id,
                                                const QString &file) const {
-  auto it = fileMtimes.find(makeKey(user, file));
+  auto it = fileMtimes.find(makeKey(id, file));
   if (it == fileMtimes.end())
+    return {};
+  return it.value();
+}
+
+std::optional<QByteArray> FSMetadata::readHash(const QString &id,
+                                               const QString &file) const {
+  auto it = hashes.find(makeKey(id, file));
+  if (it == hashes.end())
     return {};
   return it.value();
 }
@@ -63,10 +71,12 @@ void FSMetadata::recordDeletion(const QString &id, const QString &path,
                                 const QDateTime &deletedAt) {
   markDeleted(id, path, deletedAt, /*untrack=*/true);
   getUserTree(id)->deleteFile(path, deletedAt);
+  //we dont need hashes for tombstoned things
   hashes.remove(makeKey(id, path));
 }
 
-std::unique_ptr<MerkleTree> FSMetadata::buildMerkleTreeFromDb(const QString &id) {
+std::unique_ptr<MerkleTree>
+FSMetadata::buildMerkleTreeFromDb(const QString &id) {
   auto tree = std::make_unique<MerkleTree>(id);
 
   auto files = allTrackedFiles(id);

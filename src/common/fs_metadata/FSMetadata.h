@@ -14,6 +14,7 @@ public:
                                      const QString &file) const;
   std::optional<QDateTime> readMtime(const QString &id,
                                      const QString &file) const;
+  std::optional<QByteArray> readHash(const QString& id, const QString& file) const;
   QHash<QString, QDateTime> allTombstones(const QString &id) const;
   QSet<QString> allTrackedFiles(const QString &id) const;
 

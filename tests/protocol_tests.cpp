@@ -48,7 +48,6 @@ void buildDbsFromSpec(const QList<FileSpec> &specs, FSMetadata &clientDb,
   QDateTime old = now().addSecs(-10);
   QDateTime recent = now();
 
-
   for (const auto &spec : specs) {
     switch (spec.fate) {
     case FileFate::OnlyClient:
@@ -68,12 +67,12 @@ void buildDbsFromSpec(const QList<FileSpec> &specs, FSMetadata &clientDb,
     case FileFate::DifferentContentClientNewer:
       clientDb.recordFile(kUser, spec.path, recent, hashOf(spec.path + "c"));
       serverDb.recordFile(kUser, spec.path, old, hashOf(spec.path + "s"));
-      expected.modified.append(spec.path);
+      expected.modifiedWinsLeft.append(spec.path);
       break;
     case FileFate::DifferentContentServerNewer:
       clientDb.recordFile(kUser, spec.path, old, hashOf(spec.path + "c"));
       serverDb.recordFile(kUser, spec.path, recent, hashOf(spec.path + "s"));
-      expected.modified.append(spec.path);
+      expected.modifiedWinsRight.append(spec.path);
       break;
     case FileFate::DeletedOnClient:
       clientDb.recordFile(kUser, spec.path, old, hashOf(spec.path));
@@ -182,7 +181,6 @@ QSet<QString> pathsOf(const QList<QString> &list) {
   return QSet<QString>(list.begin(), list.end());
 }
 
-
 } // namespace
 
 namespace rc {
@@ -232,23 +230,49 @@ RC_GTEST_TYPED_FIXTURE_PROP(SyncProtocolTest, negotiationMatchesExpectedDiff,
 
   auto actual = runNegotiation<TypeParam>(clientDb, serverDb);
 
-    // ---- ADD DIAGNOSTIC HERE ----
+  // ---- ADD DIAGNOSTIC HERE ----
   for (const auto &s : specs) {
     RC_LOG() << "fate: " << static_cast<int>(s.fate)
              << " path: " << s.path.toStdString() << "\n";
   }
+
+  auto actualModifiedWinsLeft = QSet(actual.modifiedWinsLeft.begin(),actual.modifiedWinsLeft.end());
+  auto actualModifiedWinsRight = QSet(actual.modifiedWinsRight.begin(),actual.modifiedWinsRight.end());
+  
+  auto expectedModifiedWinsLeft = QSet(expected.modifiedWinsLeft.begin(),expected.modifiedWinsLeft.end());
+  auto expectedModifiedWinsRight = QSet(expected.modifiedWinsRight.begin(),expected.modifiedWinsRight.end());
+
   RC_LOG() << "actual onlyInLeft:   "
            << pathsOf(actual.onlyInLeft).values().join(",").toStdString();
   RC_LOG() << " expected onlyInLeft: "
            << pathsOf(expected.onlyInLeft).values().join(",").toStdString();
-
+  RC_LOG() << "actual modifiedWinsLeft:   "
+           << actualModifiedWinsLeft
+                  .values()
+                  .join(",")
+                  .toStdString();
+  RC_LOG() << "expected modifiedWinsLeft:  "
+           << expectedModifiedWinsLeft
+                  .values()
+                  .join(",")
+                  .toStdString();
+  RC_LOG() << "actual modifiedWinsRight: "
+           << actualModifiedWinsRight
+                  .values()
+                  .join(",")
+                  .toStdString();
+  RC_LOG() << " expected modifiedWinsRight: "
+           << expectedModifiedWinsRight
+                  .values()
+                  .join(",")
+                  .toStdString();
 
   RC_ASSERT(pathsOf(actual.onlyInLeft) == pathsOf(expected.onlyInLeft));
   RC_ASSERT(pathsOf(actual.onlyInRight) == pathsOf(expected.onlyInRight));
-  RC_ASSERT(pathsOf(actual.modified) == pathsOf(expected.modified));
+  RC_ASSERT(actualModifiedWinsLeft == expectedModifiedWinsLeft);
+  RC_ASSERT(actualModifiedWinsRight == expectedModifiedWinsRight);
   RC_ASSERT(pathsOf(actual.deletionWinsLeft) ==
             pathsOf(expected.deletionWinsLeft));
   RC_ASSERT(pathsOf(actual.deletionWinsRight) ==
             pathsOf(expected.deletionWinsRight));
 }
-

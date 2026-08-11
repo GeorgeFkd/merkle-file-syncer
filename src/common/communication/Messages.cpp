@@ -272,6 +272,7 @@ QByteArray ListResponseMessage::serialize() const {
     entryObj["path"] = entry.path;
     entryObj["mtime"] = entry.mtime.toString(Qt::ISODateWithMs);
     entryObj["deleted"] = entry.deleted;
+    entryObj["hash"] = QString::fromLatin1(entry.hash.toBase64());
     entriesArray.append(entryObj);
   }
   obj["entries"] = entriesArray;
@@ -288,6 +289,7 @@ ListResponseMessage::deserialize(const QJsonObject &obj) {
     entry.mtime =
         QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODateWithMs);
     entry.deleted = entryObj["deleted"].toBool();
+    entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
     msg->entries.append(entry);
   }
   return msg;

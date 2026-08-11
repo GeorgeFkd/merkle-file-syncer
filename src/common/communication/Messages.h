@@ -107,7 +107,10 @@ struct FileEntry {
   QString path;
   QDateTime mtime;
   bool deleted = false;
+  QByteArray hash;
 };
+
+
 
 QDebug operator<<(QDebug dbg,const FileEntry& entry);
 
@@ -284,7 +287,9 @@ struct DeletionEntry {
 struct NodesDiff {
   QList<QPair<bool, QString>> onlyInLeft;
   QList<QPair<bool, QString>> onlyInRight;
-  QList<QString> modified;
+  // QList<QString> modified;
+  QList<QString> modifiedWinsLeft;
+  QList<QString> modifiedWinsRight;
   QList<DeletionEntry> deletionWinsLeft;
   QList<DeletionEntry> deletionWinsRight;
 };
