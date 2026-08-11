@@ -48,7 +48,6 @@ void buildDbsFromSpec(const QList<FileSpec> &specs, FSMetadata &clientDb,
   QDateTime old = now().addSecs(-10);
   QDateTime recent = now();
 
-  qDebug() << "Old is: " << old << " recent is: " << recent;
 
   for (const auto &spec : specs) {
     switch (spec.fate) {

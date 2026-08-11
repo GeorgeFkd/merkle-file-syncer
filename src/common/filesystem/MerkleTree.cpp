@@ -227,7 +227,7 @@ bool MerkleTree::addFile(const QString &relativePath, const QDateTime &mtime,
 
         if (current->type == FileType::File) {
           current->hash = hash;
-          qDebug() << "Propagating hash of: " << current->path << " (updated).";
+          // qDebug() << "Propagating hash of: " << current->path << " (updated).";
           propagateHashUpward(current);
           return true;
         }
