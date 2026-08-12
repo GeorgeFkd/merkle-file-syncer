@@ -17,7 +17,7 @@ class TcpServerTransport: public ServerTransport {
     void start() override;
     bool isListening() const override;
     QString endpoint() const override;
-    void send(QIODevice* connection,const Message& msg) override;
+    void send(QIODevice* connection,std::shared_ptr<Message> msg) override;
 
 private:
     void onNewConnection();

@@ -14,7 +14,7 @@ public:
 
   void configure(const QString& endpoint) override;
   void connectToServer() override;
-  void send(const Message& msg) override;
+  void send(std::shared_ptr<Message> msg) override;
 
 private:
   void onConnected();

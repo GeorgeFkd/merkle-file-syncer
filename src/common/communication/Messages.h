@@ -39,9 +39,9 @@ public:
 
 class MessageProtocol {
 public:
-  static void sendMessage(QIODevice *socket, const Message &msg);
+  static void sendMessage(QIODevice *socket, std::shared_ptr<Message> msg);
   static void processBuffer(QIODevice *socket, QByteArray &buffer,
-                            std::function<void(Message *)> handler);
+                            std::function<void(std::shared_ptr<Message>)> handler);
 };
 
 struct MerkleEntry {
@@ -60,6 +60,11 @@ public:
   qint8 phase;
   QByteArray rootHash;
   QList<QPair<QString, QList<MerkleEntry>>> fileEntriesPerChild;
+    MerkleSyncMessage(int depth, qint8 phase, QByteArray rootHash,
+                    QList<QPair<QString, QList<MerkleEntry>>> fileEntriesPerChild)
+      : depth(depth), phase(phase), rootHash(std::move(rootHash)),
+        fileEntriesPerChild(std::move(fileEntriesPerChild)) {}
+  MerkleSyncMessage() = default;
   MessageType type() const override;
   QByteArray serialize() const override;
   static std::unique_ptr<MerkleSyncMessage> deserialize(const QJsonObject &obj);

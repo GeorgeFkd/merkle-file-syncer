@@ -111,11 +111,11 @@ NodesDiff runMerkle(FSMetadata &clientDb, FSMetadata &serverDb) {
   MerkleSyncServer protocolServer;
 
   QObject::connect(&protocolClient, &MerkleSyncClient::messageSendRequest,
-                   [&](MerkleProtocolMessage msg) {
+                   [&](std::shared_ptr<MerkleProtocolMessage> msg) {
                      protocolServer.handleRequest(msg, serverTree, "test-conn");
                    });
   QObject::connect(&protocolServer, &MerkleSyncServer::messageSendRequest,
-                   [&](QString, MerkleProtocolMessage msg) {
+                   [&](QString, std::shared_ptr<MerkleProtocolMessage> msg) {
                      protocolClient.handleResponse(msg, clientTree);
                    });
 
@@ -134,15 +134,15 @@ NodesDiff runNaive(FSMetadata &clientDb, FSMetadata &serverDb) {
   NaiveSyncServer protocolServer;
 
   QObject::connect(&protocolClient, &NaiveSyncClient::sendMessage,
-                   [&](ListRequestMessage req) {
-                     protocolServer.handleRequest(&req, "test-conn", &serverDb,
-                                                  kUser);
+                   [&](std::shared_ptr<ListRequestMessage> req) {
+                     protocolServer.handleRequest(req.get(), "test-conn",
+                                                  &serverDb, kUser);
                    });
-  QObject::connect(&protocolServer, &NaiveSyncServer::sendMessage,
-                   [&](ListResponseMessage resp, ConnectionId) {
-                     protocolClient.handleListingResponse(&resp, &clientDb,
-                                                          kUser);
-                   });
+  QObject::connect(
+      &protocolServer, &NaiveSyncServer::sendMessage,
+      [&](std::shared_ptr<ListResponseMessage> resp, ConnectionId) {
+        protocolClient.handleListingResponse(resp.get(), &clientDb, kUser);
+      });
 
   bool completed = false;
   QObject::connect(&protocolClient, &NaiveSyncClient::negotiationCompleted,
@@ -236,36 +236,28 @@ RC_GTEST_TYPED_FIXTURE_PROP(SyncProtocolTest, negotiationMatchesExpectedDiff,
              << " path: " << s.path.toStdString() << "\n";
   }
 
-  auto actualModifiedWinsLeft = QSet(actual.modifiedWinsLeft.begin(),actual.modifiedWinsLeft.end());
-  auto actualModifiedWinsRight = QSet(actual.modifiedWinsRight.begin(),actual.modifiedWinsRight.end());
-  
-  auto expectedModifiedWinsLeft = QSet(expected.modifiedWinsLeft.begin(),expected.modifiedWinsLeft.end());
-  auto expectedModifiedWinsRight = QSet(expected.modifiedWinsRight.begin(),expected.modifiedWinsRight.end());
+  auto actualModifiedWinsLeft =
+      QSet(actual.modifiedWinsLeft.begin(), actual.modifiedWinsLeft.end());
+  auto actualModifiedWinsRight =
+      QSet(actual.modifiedWinsRight.begin(), actual.modifiedWinsRight.end());
+
+  auto expectedModifiedWinsLeft =
+      QSet(expected.modifiedWinsLeft.begin(), expected.modifiedWinsLeft.end());
+  auto expectedModifiedWinsRight = QSet(expected.modifiedWinsRight.begin(),
+                                        expected.modifiedWinsRight.end());
 
   RC_LOG() << "actual onlyInLeft:   "
            << pathsOf(actual.onlyInLeft).values().join(",").toStdString();
   RC_LOG() << " expected onlyInLeft: "
            << pathsOf(expected.onlyInLeft).values().join(",").toStdString();
   RC_LOG() << "actual modifiedWinsLeft:   "
-           << actualModifiedWinsLeft
-                  .values()
-                  .join(",")
-                  .toStdString();
+           << actualModifiedWinsLeft.values().join(",").toStdString();
   RC_LOG() << "expected modifiedWinsLeft:  "
-           << expectedModifiedWinsLeft
-                  .values()
-                  .join(",")
-                  .toStdString();
+           << expectedModifiedWinsLeft.values().join(",").toStdString();
   RC_LOG() << "actual modifiedWinsRight: "
-           << actualModifiedWinsRight
-                  .values()
-                  .join(",")
-                  .toStdString();
+           << actualModifiedWinsRight.values().join(",").toStdString();
   RC_LOG() << " expected modifiedWinsRight: "
-           << expectedModifiedWinsRight
-                  .values()
-                  .join(",")
-                  .toStdString();
+           << expectedModifiedWinsRight.values().join(",").toStdString();
 
   RC_ASSERT(pathsOf(actual.onlyInLeft) == pathsOf(expected.onlyInLeft));
   RC_ASSERT(pathsOf(actual.onlyInRight) == pathsOf(expected.onlyInRight));

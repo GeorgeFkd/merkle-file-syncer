@@ -4,9 +4,9 @@
 #include "Messages.h"
 MerkleSyncServer::MerkleSyncServer(QObject *parent) : QObject(parent) {}
 
-void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
+void MerkleSyncServer::handleRequest(std::shared_ptr<MerkleProtocolMessage> msg,
                                      MerkleTree *tree, ConnectionId conn) {
-  MerkleProtocolMessage response;
+  auto response = std::make_shared<MerkleProtocolMessage>();
 
   auto toEntries = [tree](const QList<QPair<QString, QByteArray>> &pathHashes) {
     QList<MerkleEntry> entries;
@@ -27,34 +27,34 @@ void MerkleSyncServer::handleRequest(const MerkleProtocolMessage &msg,
     return entries;
   };
 
-  if (msg.phase == 0) {
-    if (tree->rootHash() == msg.rootHash) {
-      response.phase = 2;
+  if (msg->phase == 0) {
+    if (tree->rootHash() == msg->rootHash) {
+      response->phase = 2;
       Q_EMIT messageSendRequest(conn, response);
       return;
     }
-    response.phase = 1;
-    response.depth = 1;
+    response->phase = 1;
+    response->depth = 1;
     auto rootPath = QString("");
-    response.fileEntriesPerChild.append(
+    response->fileEntriesPerChild.append(
         {rootPath, toEntries(tree->getChildHashes(rootPath))});
     Q_EMIT messageSendRequest(conn, response);
     return;
   }
 
-  response.phase = 1;
-  response.depth = msg.depth;
-  for (const auto &[parentPath, _] : msg.fileEntriesPerChild) {
+  response->phase = 1;
+  response->depth = msg->depth;
+  for (const auto &[parentPath, _] : msg->fileEntriesPerChild) {
     auto found = tree->find(parentPath);
     assert(found.has_value());
     auto &[node, isTombstoned] = *found;
     assert(node->type == FileType::Directory);
-    response.fileEntriesPerChild.append(
+    response->fileEntriesPerChild.append(
         {parentPath, toEntries(tree->getChildHashes(parentPath))});
   }
 
-  if (response.fileEntriesPerChild.isEmpty()) {
-    response.phase = 2;
+  if (response->fileEntriesPerChild.isEmpty()) {
+    response->phase = 2;
   }
   Q_EMIT messageSendRequest(conn, response);
 }

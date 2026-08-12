@@ -33,30 +33,31 @@ FileServer::~FileServer() {}
 void FileServer::setupConnections() {
   setupSocketConnections();
 
-  QObject::connect(
-      this, &FileServer::sendMessage, this, [this](const Message &msg) {
-        auto socket = socketToTokenMap.key(msg.token, nullptr);
-        if (!socket) {
-          qDebug() << "generic message send request could not be sent.";
-          return;
-        }
-        transport->send(socket, msg);
-      });
+  QObject::connect(this, &FileServer::sendMessage, this,
+                   [this](std::shared_ptr<Message> msg) {
+                     auto socket = socketToTokenMap.key(msg->token, nullptr);
+                     if (!socket) {
+                       qDebug()
+                           << "generic message send request could not be sent.";
+                       return;
+                     }
+                     transport->send(socket, msg);
+                   });
 
   QObject::connect(&merkleSyncServer, &MerkleSyncServer::messageSendRequest,
                    this,
-                   [this](ConnectionId conn, MerkleProtocolMessage proto) {
+                   [this](ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> proto) {
                      auto socket = socketToTokenMap.key(conn, nullptr);
                      if (!socket) {
                        qDebug() << "messageSend request could not be sent.";
                        return;
                      }
-                     auto wire = toWireMessage(proto);
-                     wire.token = conn;
+                     auto wire = toWireMessage(proto.get());
+                     wire->token = conn;
                      transport->send(socket, wire);
                    });
   QObject::connect(&naiveSyncServer, &NaiveSyncServer::sendMessage, this,
-                   [this](ListResponseMessage msg, ConnectionId conn) {
+                   [this](std::shared_ptr<Message> msg, ConnectionId conn) {
                      auto socket = socketToTokenMap.key(conn, nullptr);
                      if (!socket) {
                        qDebug()
@@ -92,7 +93,7 @@ void FileServer::onSocketDisconnected(QIODevice *socket) {
   buffers.remove(socket);
 }
 
-void FileServer::dispatch(QIODevice *socket, Message *msg) {
+void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
   if (!msg) {
     qDebug() << "Failed to deserialize message";
     return;
@@ -100,40 +101,40 @@ void FileServer::dispatch(QIODevice *socket, Message *msg) {
   qDebug() << "Dispatching message to handler.";
   switch (msg->type()) {
   case MessageType::ClientAuth: {
-    auto resp = handleAuth(static_cast<AuthMessage *>(msg));
-    if (resp.success) {
-      socketToTokenMap.insert(socket, resp.token);
-      qDebug() << "Inserted token " << resp.token
+    auto resp = handleAuth(static_cast<AuthMessage *>(msg.get()));
+    if (resp->success) {
+      socketToTokenMap.insert(socket, resp->token);
+      qDebug() << "Inserted token " << resp->token
                << " in store and created session";
     }
     transport->send(socket, resp);
     break;
   }
   case MessageType::SyncRequest: {
-    auto resp = handleSyncRequest(static_cast<SyncRequestMessage *>(msg));
+    auto resp = handleSyncRequest(static_cast<SyncRequestMessage *>(msg.get()));
     transport->send(socket, resp);
     break;
   }
   case MessageType::MerkleSync: {
-    handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg));
+    handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg.get()));
     break;
   }
   case MessageType::ListRequest: {
-    auto actualMsg = static_cast<ListRequestMessage *>(msg);
+    auto actualMsg = static_cast<ListRequestMessage *>(msg.get());
     handleListRequest(actualMsg);
     break;
   }
   case MessageType::ChunkTransfer: {
-    auto resp = handleChunkUpload(static_cast<ChunkTransferMessage *>(msg));
+    auto resp = handleChunkUpload(static_cast<ChunkTransferMessage *>(msg.get()));
     transport->send(socket, resp);
     break;
   }
   case MessageType::AckChunk: {
-    handleAckChunk(static_cast<AckChunkMessage *>(msg));
+    handleAckChunk(static_cast<AckChunkMessage *>(msg.get()));
     break;
   }
   default: {
-    handleUnrecognized(msg);
+    handleUnrecognized(msg.get());
     break;
   }
   }
@@ -156,12 +157,12 @@ QString FileServer::getUserFrom(Message *msg) {
   return username.value();
 }
 
-SyncRequestMessage
+std::shared_ptr<SyncRequestMessage>
 FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
                                 const std::optional<QDateTime> &storedMtime) {
-  SyncRequestMessage response;
-  response.path = msg->path;
-  response.operationType = FileOperationType::Delete;
+  auto response = std::make_shared<SyncRequestMessage>();
+  response->path = msg->path;
+  response->operationType = FileOperationType::Delete;
 
   auto username = getUserFrom(msg);
   qDebug() << "Delete request for user:" << username
@@ -169,7 +170,7 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
 
   if (!storedMtime.has_value()) {
     qDebug() << "handleDeleteRequest: no stored mtime, marking Done";
-    response.operationStatus = FileOperationStatus::Done;
+    response->operationStatus = FileOperationStatus::Done;
     return response;
   }
 
@@ -187,41 +188,41 @@ FileServer::handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
 
   if (!fileStorage->deleteFile(username, msg->path)) {
     qDebug() << "handleDeleteRequest: failed to delete file from storage";
-    response.operationStatus = FileOperationStatus::Error;
+    response->operationStatus = FileOperationStatus::Error;
     return response;
   }
 
   QDateTime clientDeletedAt = msg->operationTime;
   recordDeletion(username, path, clientDeletedAt);
-  response.operationStatus = FileOperationStatus::Done;
+  response->operationStatus = FileOperationStatus::Done;
   return response;
 }
 
-SyncRequestMessage FileServer::trySendNewerFile(const QString &username,
-                                                const QString &path,
-                                                const QDateTime &serverMtime,
-                                                FileOperationType origOp) {
-  SyncRequestMessage response;
-  response.path = path;
-  response.operationType = origOp;
+std::shared_ptr<SyncRequestMessage>
+FileServer::trySendNewerFile(const QString &username, const QString &path,
+                             const QDateTime &serverMtime,
+                             FileOperationType origOp) {
+  auto response = std::make_shared<SyncRequestMessage>();
+  response->path = path;
+  response->operationType = origOp;
   auto contents = fileStorage->readFile(username, path);
   if (!contents.has_value()) {
     qDebug() << "trySendNewerFile: failed to read file from storage" << path;
-    response.operationStatus = FileOperationStatus::Error;
+    response->operationStatus = FileOperationStatus::Error;
     return response;
   }
-  response.contents = contents.value();
-  response.operationTime = serverMtime;
-  response.operationStatus = FileOperationStatus::ServerHasNewer;
+  response->contents = contents.value();
+  response->operationTime = serverMtime;
+  response->operationStatus = FileOperationStatus::ServerHasNewer;
   return response;
 }
 
-SyncRequestMessage
+std::shared_ptr<SyncRequestMessage>
 FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                                const std::optional<QDateTime> &storedMtime) {
-  SyncRequestMessage response;
-  response.path = msg->path;
-  response.operationType = FileOperationType::Write;
+  auto response = std::make_shared<SyncRequestMessage>();
+  response->path = msg->path;
+  response->operationType = FileOperationType::Write;
 
   auto username = getUserFrom(msg);
 
@@ -235,9 +236,9 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
              << msg->path;
     // the file was deleted more recently than this write -> deletion wins.
     // tell the client to delete it (mirror of ServerHasNewer for writes).
-    response.operationType = FileOperationType::Delete;
-    response.operationStatus = FileOperationStatus::ServerHasNewer;
-    response.operationTime = tombstone.value();
+    response->operationType = FileOperationType::Delete;
+    response->operationStatus = FileOperationStatus::ServerHasNewer;
+    response->operationTime = tombstone.value();
     return response;
   }
 
@@ -253,13 +254,13 @@ FileServer::handleWriteRequest(SyncRequestMessage *msg, const QString &path,
 
   if (!fileStorage->writeFile(username, msg->path, msg->contents)) {
     qDebug() << "handleWriteRequest: failed to write file to storage";
-    response.operationStatus = FileOperationStatus::Error;
+    response->operationStatus = FileOperationStatus::Error;
     return response;
   }
   qDebug() << "Updating db mtime: " << username << "-> " << path
            << " at: " << clientMtime;
   recordFile(username, path, clientMtime, hashContents(msg->contents));
-  response.operationStatus = FileOperationStatus::Done;
+  response->operationStatus = FileOperationStatus::Done;
   return response;
 }
 QByteArray FileServer::hashContents(const QByteArray &contents) {
@@ -293,11 +294,11 @@ void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
 
 void FileServer::handleListRequest(ListRequestMessage *msg) {
   auto username = getUserFrom(msg);
-  ListResponseMessage response;
-  response.token = msg->token;
+  auto response = std::make_shared<ListResponseMessage>();
+  response->token = msg->token;
   if (!msg->useMerkle) {
     naiveSyncServer.handleRequest(msg, msg->token, &database, username);
-    return ;
+    return;
   }
 
   bool clientWantsEverything = msg->directory.isEmpty();
@@ -309,7 +310,7 @@ void FileServer::handleListRequest(ListRequestMessage *msg) {
     }
     auto mtime = database.readMtime(username, path);
     assert(mtime.has_value() && "File in storage must have a DB mtime entry");
-    response.entries.append({path, mtime.value(), false});
+    response->entries.append({path, mtime.value(), false});
   }
 
   auto tombstones = database.allTombstones(username);
@@ -319,14 +320,15 @@ void FileServer::handleListRequest(ListRequestMessage *msg) {
     if (!clientWantsEverything && !pathIsInRequestedDir) {
       continue;
     }
-    response.entries.append({path, it.value(), true});
+    response->entries.append({path, it.value(), true});
   }
 
   Q_EMIT(sendMessage(response));
   return;
 }
 
-SyncRequestMessage FileServer::handleSyncRequest(SyncRequestMessage *msg) {
+std::shared_ptr<SyncRequestMessage>
+FileServer::handleSyncRequest(SyncRequestMessage *msg) {
   qDebug() << "Handling sync request message";
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
@@ -356,43 +358,44 @@ void FileServer::handleAckChunk(AckChunkMessage *msg) {
   qDebug() << "received ack chunk message on server";
 }
 
-AckChunkMessage FileServer::handleChunkUpload(ChunkTransferMessage *msg) {
-  AckChunkMessage response;
+std::shared_ptr<AckChunkMessage>
+FileServer::handleChunkUpload(ChunkTransferMessage *msg) {
+  auto response = std::make_shared<AckChunkMessage>();
   qDebug() << "received chunk transfer message on server";
   return response;
 }
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }
 
-AuthResponseMessage FileServer::handleAuth(AuthMessage *msg) {
+std::shared_ptr<AuthResponseMessage> FileServer::handleAuth(AuthMessage *msg) {
   qDebug() << "User: " << msg->username << "Password: " << msg->password;
-  AuthResponseMessage response;
+  auto response = std::make_shared<AuthResponseMessage>();
 
   if (msg->username.isEmpty() || msg->deviceName.isEmpty()) {
     qDebug() << "handleAuth: username or deviceName empty";
-    response.success = false;
-    response.error = "username and deviceName required";
+    response->success = false;
+    response->error = "username and deviceName required";
     return response;
   }
 
   if (sessionStore.hasSession(msg->username, msg->deviceName)) {
     qDebug() << "handleAuth: device already connected for" << msg->username
              << msg->deviceName;
-    response.success = false;
-    response.error = "device already connected";
+    response->success = false;
+    response->error = "device already connected";
     return response;
   }
 
   if (!usersDb.userExists(msg->username, msg->password)) {
     qDebug() << "handleAuth: invalid credentials for" << msg->username;
-    response.success = false;
-    response.error = "invalid credentials";
+    response->success = false;
+    response->error = "invalid credentials";
     return response;
   }
 
   QString token = sessionStore.createSession(msg->username, msg->deviceName);
-  response.success = true;
-  response.token = token;
+  response->success = true;
+  response->token = token;
   return response;
 }
 

@@ -1,13 +1,13 @@
 #pragma once
 #include "ClientTransport.h"
+#include "FSMetadata.h"
 #include "LocalFileStorage.h"
 #include "MerkleProtocolMessages.h"
 #include "MerkleSyncClient.h"
-#include "NaiveSyncClient.h"
 #include "MerkleTree.h"
 #include "Messages.h"
+#include "NaiveSyncClient.h"
 #include "UsersDb.h"
-#include "FSMetadata.h"
 #include <QString>
 #include <QTimer>
 
@@ -24,8 +24,8 @@ enum class ClientState {
 // Produced by a pure scan; consumed by an apply step that reconciles the DB
 // and merkle tree. New/modified carry the filesystem mtime; deleted carry the
 // time the deletion was detected (or its recorded tombstone time).
-//TODO: Add inodes so i can later detect renames
-using FileChangeMetadata = QPair<QString,QDateTime>; 
+// TODO: Add inodes so i can later detect renames
+using FileChangeMetadata = QPair<QString, QDateTime>;
 struct LocalChangeSet {
   QList<FileChangeMetadata> newFiles;
   QList<FileChangeMetadata> modifiedFiles;
@@ -80,13 +80,13 @@ private:
   QString token;
   void connectToServer();
   void sendAuthRequest();
-  void dispatch(Message *msg);
+  void dispatch(std::shared_ptr<Message>);
   void onConnected();
   void onDisconnected();
   void onAuthenticated();
   void setupSocketConnections();
   QString getDeviceName();
-  void handleAuthResponse(AuthResponseMessage *msg);
+  void handleAuthResponse(AuthResponseMessage *);
 
   // --- Ticking ---
   QTimer timer;
@@ -104,7 +104,7 @@ private:
   UsersDb usersDb;
   FSMetadata database;
   std::unique_ptr<MerkleTree> merkleTree;
-  MerkleTree* getMerkleTree();
+  MerkleTree *getMerkleTree();
   QByteArray hashContents(const QByteArray &contents);
   LocalChangeSet scanFilesystemForChanges() const;
   void applyChangesToDb(const LocalChangeSet &changes);
@@ -115,12 +115,13 @@ private:
   void applyTombstone(const QString &path, const QDateTime &mtime);
 
   // --- Outbound command staging ---
-  QHash<QString, SyncRequestMessage> commandsToSend;
+  QHash<QString, std::shared_ptr<SyncRequestMessage>> commandsToSend;
   int pendingMessages = 0;
   void flushOutboundCommands();
-  SyncRequestMessage buildSyncRequest(const QString &path, FileOperationType op,
-                                      const QByteArray &contents,
-                                      const std::optional<QDateTime> &mtime);
+  std::shared_ptr<SyncRequestMessage>
+  buildSyncRequest(const QString &path, FileOperationType op,
+                   const QByteArray &contents,
+                   const std::optional<QDateTime> &mtime);
   void stageUploadFor(const QString &path);
   void stageDownloadFor(const QString &path);
   void stageDeleteFor(const QString &path, const QDateTime &deletedAt);

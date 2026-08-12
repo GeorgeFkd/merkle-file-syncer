@@ -41,7 +41,7 @@ void TcpClientTransport::connectToServer() {
   socket.connectToHost(host, port);
 }
 
-void TcpClientTransport::send(const Message &msg) {
+void TcpClientTransport::send(std::shared_ptr<Message> msg) {
   MessageProtocol::sendMessage(&socket, msg);
 }
 
@@ -51,5 +51,5 @@ void TcpClientTransport::onDisconnected() { Q_EMIT disconnected(); }
 
 void TcpClientTransport::onReadyRead() {
   MessageProtocol::processBuffer(
-      &socket, buffer, [this](Message *msg) { Q_EMIT messageReady(msg); });
+      &socket, buffer, [this](std::shared_ptr<Message> msg) { Q_EMIT messageReady(msg); });
 }

@@ -49,7 +49,7 @@ QString TcpServerTransport::endpoint() const {
   // return s;
 }
 
-void TcpServerTransport::send(QIODevice *connection, const Message &msg) {
+void TcpServerTransport::send(QIODevice *connection, std::shared_ptr<Message> msg) {
   MessageProtocol::sendMessage(connection, msg);
 }
 
@@ -79,7 +79,7 @@ void TcpServerTransport::onSocketReadyRead(QIODevice *socket) {
   qDebug() << "Ready read event fired.";
   MessageProtocol::processBuffer(
       socket, buffers[socket],
-      [this, socket](Message *msg) { Q_EMIT messageReady(socket, msg); });
+      [this, socket](std::shared_ptr<Message> msg) { Q_EMIT messageReady(socket, msg); });
 }
 
 void TcpServerTransport::onSocketDisconnected(QIODevice *socket) {

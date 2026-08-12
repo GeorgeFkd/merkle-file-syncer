@@ -15,5 +15,5 @@ public:
   void handleRequest(ListRequestMessage *msg, ConnectionId,const FSMetadata* updatedDb,const QString& username);
 
 Q_SIGNALS:
-  void sendMessage(ListResponseMessage,ConnectionId);
+  void sendMessage(std::shared_ptr<ListResponseMessage>,ConnectionId);
 };

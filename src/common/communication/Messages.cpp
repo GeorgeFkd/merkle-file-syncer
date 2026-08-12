@@ -1,7 +1,7 @@
 #include "Messages.h"
 #include <qnamespace.h>
-void MessageProtocol::sendMessage(QIODevice *socket, const Message &msg) {
-  QByteArray payload = msg.serialize();
+void MessageProtocol::sendMessage(QIODevice *socket, std::shared_ptr<Message> msg) {
+  QByteArray payload = msg->serialize();
   QByteArray frame;
   QDataStream stream(&frame, QIODevice::WriteOnly);
   stream << quint32(payload.size());
@@ -10,7 +10,7 @@ void MessageProtocol::sendMessage(QIODevice *socket, const Message &msg) {
 }
 
 void MessageProtocol::processBuffer(QIODevice *socket, QByteArray &buffer,
-                                    std::function<void(Message *)> handler) {
+                                    std::function<void(std::shared_ptr<Message>)> handler) {
   buffer.append(socket->readAll());
   while (buffer.size() >= 4) {
     QDataStream stream(buffer);
@@ -20,12 +20,12 @@ void MessageProtocol::processBuffer(QIODevice *socket, QByteArray &buffer,
       break;
     QByteArray payload = buffer.mid(4, length);
     buffer.remove(0, 4 + length);
-    auto msg = Message::deserialize(payload);
+    std::shared_ptr<Message> msg = Message::deserialize(payload);
     if (!msg) {
       qDebug() << "Failed to deserialize message";
       continue;
     }
-    handler(msg.get());
+    handler(msg);
   }
 }
 

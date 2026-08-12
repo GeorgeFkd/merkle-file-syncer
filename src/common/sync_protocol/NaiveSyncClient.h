@@ -12,7 +12,7 @@ public:
   const NegotiationState *getNegotiationState() const;
 
 Q_SIGNALS:
-  void sendMessage(ListRequestMessage);
+  void sendMessage(std::shared_ptr<ListRequestMessage>);
   void negotiationCompleted(const NegotiationState &state);
 
 private:

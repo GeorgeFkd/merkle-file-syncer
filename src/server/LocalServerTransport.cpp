@@ -39,7 +39,7 @@ void LocalServerTransport::onNewConnection() {
   Q_EMIT newConnection(socket);
 }
 
-void LocalServerTransport::send(QIODevice* connection,const Message& msg) {
+void LocalServerTransport::send(QIODevice* connection,std::shared_ptr<Message> msg) {
   MessageProtocol::sendMessage(connection, msg);
 }
 
@@ -57,7 +57,7 @@ void LocalServerTransport::onSocketReadyRead(QIODevice *socket) {
   qDebug() << "Ready read event fired.";
   MessageProtocol::processBuffer(
       socket, buffers[socket],
-      [this, socket](Message *msg) { Q_EMIT messageReady(socket, msg); });
+      [this, socket](std::shared_ptr<Message>msg) { Q_EMIT messageReady(socket, msg); });
 }
 
 

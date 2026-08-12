@@ -12,9 +12,9 @@ class MerkleSyncServer : public QObject {
 public:
   explicit MerkleSyncServer(QObject *parent = nullptr);
 
-  void handleRequest(const MerkleProtocolMessage &msg, MerkleTree *tree,
+  void handleRequest(std::shared_ptr<MerkleProtocolMessage> msg, MerkleTree *tree,
                      ConnectionId conn);
 
 Q_SIGNALS:
-  void messageSendRequest(ConnectionId conn, MerkleProtocolMessage msg);
+  void messageSendRequest(ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> msg);
 };

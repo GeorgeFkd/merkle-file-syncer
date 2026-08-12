@@ -22,7 +22,7 @@ void LocalClientTransport::connectToServer() {
   socket.connectToServer(serverUrl);
 }
 
-void LocalClientTransport::send(const Message &msg) {
+void LocalClientTransport::send(std::shared_ptr<Message> msg) {
   MessageProtocol::sendMessage(&socket, msg);
 }
 
@@ -32,5 +32,5 @@ void LocalClientTransport::onDisconnected() { Q_EMIT disconnected(); }
 
 void LocalClientTransport::onReadyRead() {
   MessageProtocol::processBuffer(
-      &socket, buffer, [this](Message *msg) { Q_EMIT messageReady(msg); });
+      &socket, buffer, [this](std::shared_ptr<Message> msg) { Q_EMIT messageReady(msg); });
 }

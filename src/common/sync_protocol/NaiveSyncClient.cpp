@@ -4,7 +4,7 @@ NaiveSyncClient::NaiveSyncClient(QObject *parent) : QObject(parent) {}
 
 void NaiveSyncClient::startNegotiation() {
   negotiationState = NegotiationState{};
-  ListRequestMessage msg;
+  auto msg = std::make_shared<ListRequestMessage>();
   negotiationInProgress = true;
   Q_EMIT(sendMessage(msg));
 }

@@ -10,22 +10,22 @@ const NegotiationState *MerkleSyncClient::getNegotiationState() const {
 void MerkleSyncClient::startNegotiation(MerkleTree *tree) {
   negotiationState = NegotiationState{};
   inProgress = true;
-  MerkleProtocolMessage msg;
-  msg.phase = 0;
-  msg.depth = 0;
-  msg.rootHash = tree->rootHash();
+  auto msg = std::make_shared<MerkleProtocolMessage>();
+  msg->phase = 0;
+  msg->depth = 0;
+  msg->rootHash = tree->rootHash();
   Q_EMIT messageSendRequest(msg);
 }
 
-void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
+void MerkleSyncClient::handleResponse(std::shared_ptr<MerkleProtocolMessage> msg,
                                       MerkleTree *tree) {
-  if (msg.phase == 2) {
+  if (msg->phase == 2) {
     inProgress = false;
     Q_EMIT negotiationCompleted(negotiationState);
     return;
   }
 
-  for (const auto &[parentPath, fileEntries] : msg.fileEntriesPerChild) {
+  for (const auto &[parentPath, fileEntries] : msg->fileEntriesPerChild) {
     auto parent = tree->find(parentPath);
     assert(parent.has_value());
     auto clientHashesOfNode = tree->getChildHashes(parentPath);
@@ -128,11 +128,11 @@ void MerkleSyncClient::handleResponse(const MerkleProtocolMessage &msg,
       classifyAndAppend(path);
   }
   if (!negotiationState.directoriesToCheckWithServer.isEmpty()) {
-    MerkleProtocolMessage nextMsg;
-    nextMsg.phase = 1;
-    nextMsg.depth = msg.depth + 1;
+    auto nextMsg = std::make_shared<MerkleProtocolMessage>();
+    nextMsg->phase = 1;
+    nextMsg->depth = msg->depth + 1;
     for (const auto &dirPath : negotiationState.directoriesToCheckWithServer) {
-      nextMsg.fileEntriesPerChild.append({dirPath, {}});
+      nextMsg->fileEntriesPerChild.append({dirPath, {}});
     }
     negotiationState.directoriesToCheckWithServer.clear();
     Q_EMIT messageSendRequest(nextMsg);

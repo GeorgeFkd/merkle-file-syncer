@@ -14,10 +14,10 @@ public:
     virtual bool isListening() const = 0;
     virtual QString endpoint() const = 0;
 
-    virtual void send(QIODevice *connection,const Message& msg) = 0;
+    virtual void send(QIODevice *connection,std::shared_ptr<Message> msg) = 0;
 
 Q_SIGNALS:
     void newConnection(QIODevice* connection);
-    void messageReady(QIODevice* connection,Message* msg);
+    void messageReady(QIODevice* connection,std::shared_ptr<Message> msg);
     void disconnected(QIODevice* connection);
 };

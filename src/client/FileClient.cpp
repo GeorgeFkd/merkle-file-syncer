@@ -58,16 +58,16 @@ void FileClient::setupConnections() {
   QObject::connect(this, &FileClient::outboundFileCommandsReady, this,
                    &FileClient::flushOutboundCommands);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::messageSendRequest,
-                   this, [this](MerkleProtocolMessage protoMsg) {
-                     MerkleSyncMessage msg = toWireMessage(protoMsg);
-                     msg.token = token;
+                   this, [this](std::shared_ptr<MerkleProtocolMessage> protoMsg) {
+                     auto msg = toWireMessage(protoMsg.get());
+                     msg->token = token;
                      transport->send(msg);
                    });
   QObject::connect(&naiveSyncClient, &NaiveSyncClient::sendMessage, this,
-                   [this](ListRequestMessage msg) {
+                   [this](std::shared_ptr<ListRequestMessage> msg) {
                      awaitingListResponse = true;
-                     msg.token = token;
-                     msg.useMerkle = false;
+                     msg->token = token;
+                     msg->useMerkle = false;
                      transport->send(msg);
                    });
 
@@ -113,38 +113,38 @@ void FileClient::startTimer() {
   }
 }
 
-void FileClient::dispatch(Message *msg) {
+void FileClient::dispatch(std::shared_ptr<Message> msg) {
   if (!msg) {
     qDebug() << "Failed to deserialize message";
     return;
   }
   switch (msg->type()) {
   case MessageType::ServerAuthResponse: {
-    handleAuthResponse(static_cast<AuthResponseMessage *>(msg));
+    handleAuthResponse(static_cast<AuthResponseMessage *>(msg.get()));
     break;
   }
   case MessageType::SyncRequest: {
-    handleSyncResponse(static_cast<SyncRequestMessage *>(msg));
+    handleSyncResponse(static_cast<SyncRequestMessage *>(msg.get()));
     break;
   }
   case MessageType::MerkleSync: {
-    handleMerkleSyncResponse(static_cast<MerkleSyncMessage *>(msg));
+    handleMerkleSyncResponse(static_cast<MerkleSyncMessage *>(msg.get()));
     break;
   }
   case MessageType::ListResponse: {
-    handleListResponse(static_cast<ListResponseMessage *>(msg));
+    handleListResponse(static_cast<ListResponseMessage *>(msg.get()));
     break;
   }
   case MessageType::ChunkTransfer: {
-    handleChunkDownload(static_cast<ChunkTransferMessage *>(msg));
+    handleChunkDownload(static_cast<ChunkTransferMessage *>(msg.get()));
     break;
   }
   case MessageType::AckChunk: {
-    handleChunkAck(static_cast<AckChunkMessage *>(msg));
+    handleChunkAck(static_cast<AckChunkMessage *>(msg.get()));
     break;
   }
   default: {
-    handleUnrecognized(msg);
+    handleUnrecognized(msg.get());
     break;
   }
   }
@@ -493,24 +493,24 @@ void FileClient::stageDirectoryUpload(const QString &dirPath) {
 }
 
 void FileClient::requestDirectoryList(const QString &dirPath) {
-  ListRequestMessage req;
+  auto req = std::make_shared<ListRequestMessage>();
   qDebug() << "Directory requested is: " << dirPath;
-  req.useMerkle = syncStrategy == SyncStrategy::Merkle;
-  req.token = token;
-  req.directory = dirPath;
+  req->useMerkle = syncStrategy == SyncStrategy::Merkle;
+  req->token = token;
+  req->directory = dirPath;
   pendingDirectoryRequests++;
   transport->send(req);
 }
 
 void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
-  SyncRequestMessage msg;
-  msg.token = token;
-  msg.path = path;
-  msg.contents = {};
-  msg.operationTime = deletedAt;
-  msg.operationType = FileOperationType::Delete;
-  msg.operationStatus = FileOperationStatus::DoIt;
+  auto msg = std::make_shared<SyncRequestMessage>();
+  msg->token = token;
+  msg->path = path;
+  msg->contents = {};
+  msg->operationTime = deletedAt;
+  msg->operationType = FileOperationType::Delete;
+  msg->operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
   MerkleTree *merkleTree = getMerkleTree();
   if (merkleTree) {
@@ -518,17 +518,17 @@ void FileClient::stageDeleteFor(const QString &path,
   }
 }
 
-SyncRequestMessage
+std::shared_ptr<SyncRequestMessage>
 FileClient::buildSyncRequest(const QString &path, FileOperationType op,
                              const QByteArray &contents,
                              const std::optional<QDateTime> &mtime) {
-  SyncRequestMessage msg;
-  msg.token = token;
-  msg.path = path;
-  msg.contents = contents;
-  msg.operationTime = mtime.has_value() ? mtime.value() : QDateTime();
-  msg.operationType = op;
-  msg.operationStatus = FileOperationStatus::DoIt;
+  auto msg = std::make_shared<SyncRequestMessage>();
+  msg->token = token;
+  msg->path = path;
+  msg->contents = contents;
+  msg->operationTime = mtime.has_value() ? mtime.value() : QDateTime();
+  msg->operationType = op;
+  msg->operationStatus = FileOperationStatus::DoIt;
   return msg;
 }
 
@@ -621,10 +621,10 @@ void FileClient::applyTombstone(const QString &path, const QDateTime &mtime) {
 QString FileClient::getDeviceName() { return deviceName; }
 
 void FileClient::sendAuthRequest() {
-  AuthMessage msg;
-  msg.username = username;
-  msg.password = password;
-  msg.deviceName = getDeviceName();
+  auto msg = std::make_shared<AuthMessage>();
+  msg->username = username;
+  msg->password = password;
+  msg->deviceName = getDeviceName();
   transport->send(msg);
 }
 

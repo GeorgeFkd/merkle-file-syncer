@@ -33,7 +33,7 @@ public:
                  const QByteArray &contents, const QDateTime &mtime);
 
 Q_SIGNALS:
-  void sendMessage(const Message &msg);
+  void sendMessage(std::shared_ptr<Message> msg);
 
 private:
   // --- Server lifecycle / connections ---
@@ -46,13 +46,13 @@ private:
   void onSocketDisconnected(QIODevice *socket);
   void onSocketReadyRead(QIODevice *socket);
   void onNewConnection();
-  void dispatch(QIODevice *socket, Message *msg);
+  void dispatch(QIODevice *socket, std::shared_ptr<Message> msg);
   void setupNewSocketConnection(QLocalSocket *socket);
 
   // --- Auth / sessions ---
   SessionRegistry sessionStore;
   QHash<QIODevice *, QString> socketToTokenMap;
-  AuthResponseMessage handleAuth(AuthMessage *msg);
+  std::shared_ptr<AuthResponseMessage> handleAuth(AuthMessage *msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
   std::optional<QString> getUsername(const QString &token);
@@ -75,20 +75,20 @@ private:
   QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---
-  SyncRequestMessage handleSyncRequest(SyncRequestMessage *msg);
-  SyncRequestMessage
+  std::shared_ptr<SyncRequestMessage> handleSyncRequest(SyncRequestMessage *msg);
+  std::shared_ptr<SyncRequestMessage>
   handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                      const std::optional<QDateTime> &storedMtime);
-  SyncRequestMessage
+  std::shared_ptr<SyncRequestMessage>
   handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
                       const std::optional<QDateTime> &storedMtime);
-  SyncRequestMessage trySendNewerFile(const QString &username,
+  std::shared_ptr<SyncRequestMessage> trySendNewerFile(const QString &username,
                                       const QString &path,
                                       const QDateTime &serverMtime,
                                       FileOperationType op);
 
   // --- Chunking ---
-  AckChunkMessage handleChunkUpload(ChunkTransferMessage *msg);
+  std::shared_ptr<AckChunkMessage> handleChunkUpload(ChunkTransferMessage *msg);
   void handleAckChunk(AckChunkMessage *msg);
   // --- Listing ---
   void handleListRequest(ListRequestMessage *msg);
