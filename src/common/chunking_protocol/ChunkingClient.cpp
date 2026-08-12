@@ -5,24 +5,25 @@
 
 ChunkingClient::ChunkingClient(QObject *parent) : QObject(parent) {}
 
-void ChunkingClient::onMessage(const Message *msg) {
+void ChunkingClient::onMessage(std::shared_ptr<Message> msg) {
   if (msg->type() == MessageType::AckChunk) {
-    handleAckChunkOfUpload(static_cast<const ACKChunkReceived *>(msg));
+    handleAckChunkOfUpload(std::static_pointer_cast<ACKChunkReceived>(msg));
     return;
   }
   if (msg->type() == MessageType::SpecifyChunkSizeDownload) {
     handleDownloadSizeReceived(
-        static_cast<const SpecifyChunkSizeDownload *>(msg));
+        std::static_pointer_cast<SpecifyChunkSizeDownload>(msg));
     return;
   }
 
   if (msg->type() == MessageType::SpecifyChunkSizeUpload) {
-    handleUploadSizeReceived(static_cast<const SpecifyChunkSizeUpload *>(msg));
+    handleUploadSizeReceived(
+        std::static_pointer_cast<SpecifyChunkSizeUpload>(msg));
     return;
   }
 
   if (msg->type() == MessageType::ChunkTransfer) {
-    handleChunkReceived(static_cast<const ChunkTransfer *>(msg));
+    handleChunkReceived(std::static_pointer_cast<ChunkTransfer>(msg));
     return;
   }
 }
@@ -63,7 +64,7 @@ void ChunkingClient::startDownload(const QString &path,
 }
 
 void ChunkingClient::handleUploadSizeReceived(
-    const SpecifyChunkSizeUpload *msg) {
+    std::shared_ptr<SpecifyChunkSizeUpload> msg) {
   auto it = uploadStates.find(msg->path);
   Q_ASSERT_X(it != uploadStates.end(),
              "ChunkingClient::handleUploadSizeReceived",
@@ -98,14 +99,15 @@ void ChunkingClient::sendPart(const QString &path, quint32 partNumber) {
       hashContents(bytes))));
 }
 
-void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived *msg) {
+void ChunkingClient::handleAckChunkOfUpload(
+    std::shared_ptr<ACKChunkReceived> msg) {
   auto it = uploadStates.find(msg->path);
   assert(it != uploadStates.end());
   if (msg->failureType != TransferFailure::NONE) {
     assert(!msg->failureMsg.isEmpty() &&
            "When setting failureType also put failureMsg for details.");
     it->transferProgress.currentPhase = TransferPhase::FAILED;
-    qDebug() << msg;
+    qDebug() << msg.get();
     qDebug() << "Sending part number due to failure: " << msg->partNumber;
     sendPart(msg->path, msg->partNumber);
     return;
@@ -134,7 +136,7 @@ void ChunkingClient::handleAckChunkOfUpload(const ACKChunkReceived *msg) {
 }
 
 void ChunkingClient::handleDownloadSizeReceived(
-    const SpecifyChunkSizeDownload *msg) {
+    std::shared_ptr<SpecifyChunkSizeDownload> msg) {
   auto it = downloadStates.find(msg->path);
   assert(it != downloadStates.end());
 
@@ -142,7 +144,7 @@ void ChunkingClient::handleDownloadSizeReceived(
   it->transferProgress.totalParts = msg->totalChunks;
 }
 
-void ChunkingClient::handleChunkReceived(const ChunkTransfer *msg) {
+void ChunkingClient::handleChunkReceived(std::shared_ptr<ChunkTransfer> msg) {
   auto it = downloadStates.find(msg->filepath);
   assert(it != downloadStates.end() &&
          "download state was not found on client chunk receive.");

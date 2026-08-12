@@ -8,7 +8,7 @@ public:
   explicit NaiveSyncClient(QObject *parent = nullptr);
 
   void startNegotiation();
-  void handleListingResponse(ListResponseMessage *,const FSMetadata* updatedDb,const QString& username);
+  void onMessage(std::shared_ptr<ListResponseMessage> ,const FSMetadata* updatedDb,const QString& username);
   const NegotiationState *getNegotiationState() const;
 
 Q_SIGNALS:

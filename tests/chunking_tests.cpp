@@ -139,7 +139,7 @@ void wireClientServer(ChunkingClient &client, ChunkingServer &server,
             ct->bytes = corrupt(ct->bytes, 0);
           }
         }
-        server.onMessage(msg.get(), ChunkingServerInMsgCtx{clientId});
+        server.onMessage(msg, ChunkingServerInMsgCtx{clientId});
       },
       Qt::DirectConnection);
 
@@ -155,7 +155,7 @@ void wireClientServer(ChunkingClient &client, ChunkingServer &server,
             ct->bytes = corrupt(ct->bytes, 0);
           }
         }
-        client.onMessage(msg.get());
+        client.onMessage(msg);
       },
       Qt::DirectConnection);
 }

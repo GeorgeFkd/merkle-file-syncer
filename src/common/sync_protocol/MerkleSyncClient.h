@@ -10,7 +10,7 @@ public:
   explicit MerkleSyncClient(QObject *parent = nullptr);
 
   void startNegotiation(MerkleTree *tree);
-  void handleResponse(std::shared_ptr<MerkleProtocolMessage> msg, MerkleTree *tree);
+  void onMessage(std::shared_ptr<MerkleProtocolMessage> msg, MerkleTree *tree);
 
   const NegotiationState *getNegotiationState() const;
 

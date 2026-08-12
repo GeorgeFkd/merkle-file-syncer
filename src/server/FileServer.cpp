@@ -44,18 +44,18 @@ void FileServer::setupConnections() {
                      transport->send(socket, msg);
                    });
 
-  QObject::connect(&merkleSyncServer, &MerkleSyncServer::messageSendRequest,
-                   this,
-                   [this](ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> proto) {
-                     auto socket = socketToTokenMap.key(conn, nullptr);
-                     if (!socket) {
-                       qDebug() << "messageSend request could not be sent.";
-                       return;
-                     }
-                     auto wire = toWireMessage(proto.get());
-                     wire->token = conn;
-                     transport->send(socket, wire);
-                   });
+  QObject::connect(
+      &merkleSyncServer, &MerkleSyncServer::messageSendRequest, this,
+      [this](ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> proto) {
+        auto socket = socketToTokenMap.key(conn, nullptr);
+        if (!socket) {
+          qDebug() << "messageSend request could not be sent.";
+          return;
+        }
+        auto wire = toWireMessage(proto.get());
+        wire->token = conn;
+        transport->send(socket, wire);
+      });
   QObject::connect(&naiveSyncServer, &NaiveSyncServer::sendMessage, this,
                    [this](std::shared_ptr<Message> msg, ConnectionId conn) {
                      auto socket = socketToTokenMap.key(conn, nullptr);
@@ -101,7 +101,7 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
   qDebug() << "Dispatching message to handler.";
   switch (msg->type()) {
   case MessageType::ClientAuth: {
-    auto resp = handleAuth(static_cast<AuthMessage *>(msg.get()));
+    auto resp = handleAuth(std::static_pointer_cast<AuthMessage>(msg));
     if (resp->success) {
       socketToTokenMap.insert(socket, resp->token);
       qDebug() << "Inserted token " << resp->token
@@ -111,21 +111,23 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
     break;
   }
   case MessageType::SyncRequest: {
-    auto resp = handleSyncRequest(static_cast<SyncRequestMessage *>(msg.get()));
+    auto resp =
+        handleSyncRequest(std::static_pointer_cast<SyncRequestMessage>(msg));
     transport->send(socket, resp);
     break;
   }
   case MessageType::MerkleSync: {
-    handleMerkleSyncRequest(static_cast<MerkleSyncMessage *>(msg.get()));
+    handleMerkleSyncRequest(std::static_pointer_cast<MerkleSyncMessage>(msg));
     break;
   }
   case MessageType::ListRequest: {
-    auto actualMsg = static_cast<ListRequestMessage *>(msg.get());
+    auto actualMsg = std::static_pointer_cast<ListRequestMessage>(msg);
     handleListRequest(actualMsg);
     break;
   }
   case MessageType::ChunkTransfer: {
-    auto resp = handleChunkUpload(static_cast<ChunkTransferMessage *>(msg.get()));
+    auto resp =
+        handleChunkUpload(static_cast<ChunkTransferMessage *>(msg.get()));
     transport->send(socket, resp);
     break;
   }
@@ -283,21 +285,22 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
   return database.getUserTree(username);
 }
 
-void FileServer::handleMerkleSyncRequest(MerkleSyncMessage *msg) {
+void FileServer::handleMerkleSyncRequest(
+    std::shared_ptr<MerkleSyncMessage> msg) {
   qDebug() << "Handling merkle sync message at server";
-  auto username = getUserFrom(msg);
+  auto username = getUserFrom(msg.get());
 
   auto serverTree = getUserTree(username);
-  merkleSyncServer.handleRequest(toProtocolMessage(*msg), serverTree,
-                                 msg->token);
+  merkleSyncServer.onMessage(toProtocolMessage(msg.get()), serverTree,
+                             msg->token);
 }
 
-void FileServer::handleListRequest(ListRequestMessage *msg) {
-  auto username = getUserFrom(msg);
+void FileServer::handleListRequest(std::shared_ptr<ListRequestMessage> msg) {
+  auto username = getUserFrom(msg.get());
   auto response = std::make_shared<ListResponseMessage>();
   response->token = msg->token;
   if (!msg->useMerkle) {
-    naiveSyncServer.handleRequest(msg, msg->token, &database, username);
+    naiveSyncServer.onMessage(msg, msg->token, &database, username);
     return;
   }
 
@@ -328,12 +331,12 @@ void FileServer::handleListRequest(ListRequestMessage *msg) {
 }
 
 std::shared_ptr<SyncRequestMessage>
-FileServer::handleSyncRequest(SyncRequestMessage *msg) {
+FileServer::handleSyncRequest(std::shared_ptr<SyncRequestMessage> msg) {
   qDebug() << "Handling sync request message";
   Q_ASSERT_X(fileStorage != nullptr, "FileServer::handleSyncRequest",
              "fileStorage is not set");
 
-  auto username = getUserFrom(msg);
+  auto username = getUserFrom(msg.get());
 
   auto storedMtime = database.readMtime(username, msg->path);
 
@@ -342,14 +345,14 @@ FileServer::handleSyncRequest(SyncRequestMessage *msg) {
              << sessionStore.getDeviceName(msg->token)
              << " receives the following msg: ";
     qDebug() << *msg;
-    return handleDeleteRequest(msg, msg->path, storedMtime);
+    return handleDeleteRequest(msg.get(), msg->path, storedMtime);
   } else if (msg->operationType == FileOperationType::Write) {
     qDebug() << "Write request from device: "
              << sessionStore.getDeviceName(msg->token)
              << " receives the following msg: ";
     qDebug() << *msg;
 
-    return handleWriteRequest(msg, msg->path, storedMtime);
+    return handleWriteRequest(msg.get(), msg->path, storedMtime);
   }
   assert(false);
 }
@@ -367,7 +370,8 @@ FileServer::handleChunkUpload(ChunkTransferMessage *msg) {
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }
 
-std::shared_ptr<AuthResponseMessage> FileServer::handleAuth(AuthMessage *msg) {
+std::shared_ptr<AuthResponseMessage>
+FileServer::handleAuth(std::shared_ptr<AuthMessage> msg) {
   qDebug() << "User: " << msg->username << "Password: " << msg->password;
   auto response = std::make_shared<AuthResponseMessage>();
 

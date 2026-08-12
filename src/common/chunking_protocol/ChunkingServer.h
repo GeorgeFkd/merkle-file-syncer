@@ -52,22 +52,24 @@ public:
   void setReader(ChunkReader reader);
   void setMetadataReader(MetadataReader reader);
 
-  void onMessage(const Message *msg, ChunkingServerInMsgCtx msgInCtx);
-  void handleRequestChunkSizeForUpload(const ClientId &clientId,
-                                       const RequestChunkSizeForUpload *msg);
-  void
-  handleRequestChunkSizeForDownload(const ClientId &clientId,
-                                    const RequestChunkSizeForDownload *msg);
+  void onMessage(std::shared_ptr<Message> msg, ChunkingServerInMsgCtx msgInCtx);
+  void handleRequestChunkSizeForUpload(
+      const ClientId &clientId, std::shared_ptr<RequestChunkSizeForUpload> msg);
+  void handleRequestChunkSizeForDownload(
+      const ClientId &clientId,
+      std::shared_ptr<RequestChunkSizeForDownload> msg);
 
-  void handleChunkReceived(const ClientId &clientId, const ChunkTransfer *msg);
+  void handleChunkReceived(const ClientId &clientId,
+                           std::shared_ptr<ChunkTransfer> msg);
   void handleAckChunkOfDownload(const ClientId &clientId,
-                                const ACKChunkReceived *msg);
+                                std::shared_ptr<ACKChunkReceived> msg);
   void handleCancelReceived(const ClientId &clientId,
-                            const CancelTransfer *msg);
+                            std::shared_ptr<CancelTransfer> msg);
 
 Q_SIGNALS:
   void uploadCompleted(ClientId, QString path);
-  void uploadStarted(ClientId,QString path,quint64 fileSize,quint64 chunkSize);
+  void uploadStarted(ClientId, QString path, quint64 fileSize,
+                     quint64 chunkSize);
   void uploadCancelled(ClientId, QString path);
 
   void downloadCompleted(ClientId clientId, QString path);
@@ -75,7 +77,8 @@ Q_SIGNALS:
 
   void chunkToUploadArrived(ServerWriteCommand writeCmd);
 
-  void sendMessage(std::shared_ptr<Message> msg,ChunkingServerOutMsgCtx msgOutCtx);
+  void sendMessage(std::shared_ptr<Message> msg,
+                   ChunkingServerOutMsgCtx msgOutCtx);
 
 private:
   void sendPart(const ClientId &clientId, const QString &path,

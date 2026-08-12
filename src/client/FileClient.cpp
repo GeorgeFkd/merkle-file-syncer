@@ -58,7 +58,8 @@ void FileClient::setupConnections() {
   QObject::connect(this, &FileClient::outboundFileCommandsReady, this,
                    &FileClient::flushOutboundCommands);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::messageSendRequest,
-                   this, [this](std::shared_ptr<MerkleProtocolMessage> protoMsg) {
+                   this,
+                   [this](std::shared_ptr<MerkleProtocolMessage> protoMsg) {
                      auto msg = toWireMessage(protoMsg.get());
                      msg->token = token;
                      transport->send(msg);
@@ -132,7 +133,7 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     break;
   }
   case MessageType::ListResponse: {
-    handleListResponse(static_cast<ListResponseMessage *>(msg.get()));
+    handleListResponse(std::static_pointer_cast<ListResponseMessage>(msg));
     break;
   }
   case MessageType::ChunkTransfer: {
@@ -152,7 +153,8 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
 
 FileClient::~FileClient() {}
 
-void FileClient::handleMerkleDirectoryListing(ListResponseMessage *msg) {
+void FileClient::handleMerkleDirectoryListing(
+    std::shared_ptr<ListResponseMessage> msg) {
   for (const auto &entry : msg->entries) {
     if (!entry.deleted) {
       qDebug() << "Hello";
@@ -171,7 +173,7 @@ void FileClient::handleMerkleDirectoryListing(ListResponseMessage *msg) {
   return;
 }
 
-void FileClient::handleListResponse(ListResponseMessage *msg) {
+void FileClient::handleListResponse(std::shared_ptr<ListResponseMessage> msg) {
   awaitingListResponse = false;
   qDebug() << "Handling list response from server with" << msg->entries.size()
            << "entries";
@@ -180,7 +182,7 @@ void FileClient::handleListResponse(ListResponseMessage *msg) {
     handleMerkleDirectoryListing(msg);
     return;
   }
-  naiveSyncClient.handleListingResponse(msg, &database, username);
+  naiveSyncClient.onMessage(msg, &database, username);
 }
 
 void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
@@ -479,7 +481,7 @@ void FileClient::handleMerkleSyncResponse(MerkleSyncMessage *msg) {
   qDebug() << "Handling merkle response at client";
   assert(msg->phase != 0 && "Client always initiates the negotiation server "
                             "should respond with phase 1 or 2.");
-  merkleSyncClient.handleResponse(toProtocolMessage(*msg), getMerkleTree());
+  merkleSyncClient.onMessage(toProtocolMessage(msg), getMerkleTree());
 }
 
 void FileClient::stageDirectoryUpload(const QString &dirPath) {
@@ -573,7 +575,6 @@ void FileClient::handleNegotiationCompleted(
   for (const auto &path : negotiationState.diffEntries.modifiedWinsRight) {
     stageDownloadFor(path);
   }
-
 
   // for (const auto &path : negotiationState.diffEntries.modified) {
   //   // modified should only contain files at this point — directories

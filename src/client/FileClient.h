@@ -137,8 +137,8 @@ private:
 
   int pendingDirectoryRequests = 0;
   void requestDirectoryList(const QString &dirPath);
-  void handleListResponse(ListResponseMessage *msg);
-  void handleMerkleDirectoryListing(ListResponseMessage *msg);
+  void handleListResponse(std::shared_ptr<ListResponseMessage> msg);
+  void handleMerkleDirectoryListing(std::shared_ptr<ListResponseMessage> msg);
 
   // --- Merkle negotiation ---
   bool currentlyNegotiatingFileDiffs = false;

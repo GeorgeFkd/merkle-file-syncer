@@ -9,9 +9,9 @@ void NaiveSyncClient::startNegotiation() {
   Q_EMIT(sendMessage(msg));
 }
 
-void NaiveSyncClient::handleListingResponse(ListResponseMessage *msg,
-                                            const FSMetadata *updatedDb,
-                                            const QString &username) {
+void NaiveSyncClient::onMessage(std::shared_ptr<ListResponseMessage> msg,
+                                const FSMetadata *updatedDb,
+                                const QString &username) {
   QHash<QString, SideState> serverByPath;
   for (const auto &entry : msg->entries) {
     SideState right;

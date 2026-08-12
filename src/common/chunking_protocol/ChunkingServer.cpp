@@ -5,36 +5,37 @@
 
 ChunkingServer::ChunkingServer(QObject *parent) : QObject(parent) {}
 
-void ChunkingServer::onMessage(const Message *msg,
+void ChunkingServer::onMessage(std::shared_ptr<Message> msg,
                                ChunkingServerInMsgCtx msgInCtx) {
   if (msg->type() == MessageType::RequestChunkSizeUpload) {
     handleRequestChunkSizeForUpload(
-        msgInCtx.clientId, static_cast<const RequestChunkSizeForUpload *>(msg));
+        msgInCtx.clientId,
+        std::static_pointer_cast<RequestChunkSizeForUpload>(msg));
     return;
   }
 
   if (msg->type() == MessageType::RequestChunkSizeDownload) {
     handleRequestChunkSizeForDownload(
         msgInCtx.clientId,
-        static_cast<const RequestChunkSizeForDownload *>(msg));
+        std::static_pointer_cast<RequestChunkSizeForDownload>(msg));
     return;
   }
 
   if (msg->type() == MessageType::ChunkTransfer) {
     handleChunkReceived(msgInCtx.clientId,
-                        static_cast<const ChunkTransfer *>(msg));
+                        std::static_pointer_cast<ChunkTransfer>(msg));
     return;
   }
 
   if (msg->type() == MessageType::AckChunk) {
     handleAckChunkOfDownload(msgInCtx.clientId,
-                             static_cast<const ACKChunkReceived *>(msg));
+                             std::static_pointer_cast<ACKChunkReceived >(msg));
     return;
   }
 
   if (msg->type() == MessageType::CancelTransfer) {
     handleCancelReceived(msgInCtx.clientId,
-                         static_cast<const CancelTransfer *>(msg));
+                         std::static_pointer_cast<CancelTransfer >(msg));
     return;
   }
 }
@@ -52,7 +53,7 @@ void ChunkingServer::setMetadataReader(MetadataReader reader) {
 }
 
 void ChunkingServer::handleRequestChunkSizeForUpload(
-    const ClientId &clientId, const RequestChunkSizeForUpload *msg) {
+    const ClientId &clientId, std::shared_ptr<RequestChunkSizeForUpload> msg) {
   Q_ASSERT_X(chunkSizeCalculator, "handleRequestChunkSizeForUpload",
              "chunkSizeCalculator not set");
 
@@ -79,7 +80,7 @@ void ChunkingServer::handleRequestChunkSizeForUpload(
 }
 
 void ChunkingServer::handleRequestChunkSizeForDownload(
-    const ClientId &clientId, const RequestChunkSizeForDownload *msg) {
+    const ClientId &clientId, std::shared_ptr<RequestChunkSizeForDownload> msg) {
   Q_ASSERT_X(chunkSizeCalculator, "handleRequestChunkSizeForDownload",
              "chunkSizeCalculator not set");
   Q_ASSERT_X(metadataReader, "handleRequestChunkSizeForDownload",
@@ -138,7 +139,7 @@ void ChunkingServer::sendPart(const ClientId &clientId, const QString &path,
 }
 
 void ChunkingServer::handleChunkReceived(const ClientId &clientId,
-                                         const ChunkTransfer *msg) {
+                                         std::shared_ptr<ChunkTransfer> msg) {
   const TransferKey key{clientId, msg->filepath};
   auto it = uploadStates.find(key);
   Q_ASSERT_X(it != uploadStates.end(), "handleChunkReceived",
@@ -181,7 +182,7 @@ void ChunkingServer::handleChunkReceived(const ClientId &clientId,
 }
 
 void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
-                                              const ACKChunkReceived *msg) {
+                                              std::shared_ptr<ACKChunkReceived> msg) {
   auto it = downloadStates.find(TransferKey{clientId, msg->path});
   Q_ASSERT_X(it != downloadStates.end(), "handleAckChunkOfDownload",
              "no download state for (clientId, path)");
@@ -210,7 +211,7 @@ void ChunkingServer::handleAckChunkOfDownload(const ClientId &clientId,
 }
 
 void ChunkingServer::handleCancelReceived(const ClientId &clientId,
-                                          const CancelTransfer *msg) {
+                                          std::shared_ptr<CancelTransfer> msg) {
   const TransferKey key{clientId, msg->path};
 
   if (uploadStates.contains(key)) {

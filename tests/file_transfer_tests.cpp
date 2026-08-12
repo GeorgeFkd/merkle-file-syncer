@@ -75,7 +75,7 @@ protected:
     QObject::connect(
         client.get(), &FileTransferClient::sendMessage, server.get(),
         [this](std::shared_ptr<Message> msg) {
-          server->onMessage(msg.get(),
+          server->onMessage(msg,
                             FileTransferServerInMsgCtx{clientId, user});
         },
         Qt::DirectConnection);
@@ -84,7 +84,7 @@ protected:
     QObject::connect(
         server.get(), &FileTransferServer::sendMessage, client.get(),
         [this](std::shared_ptr<Message> msg, FileTransferServerOutMsgCtx) {
-          client->onMessage(msg.get());
+          client->onMessage(msg);
         },
         Qt::DirectConnection);
 

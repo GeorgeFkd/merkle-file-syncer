@@ -12,7 +12,7 @@ class NaiveSyncServer : public QObject {
 public:
   explicit NaiveSyncServer(QObject *parent = nullptr);
 
-  void handleRequest(ListRequestMessage *msg, ConnectionId,const FSMetadata* updatedDb,const QString& username);
+  void onMessage(std::shared_ptr<ListRequestMessage> msg, ConnectionId,const FSMetadata* updatedDb,const QString& username);
 
 Q_SIGNALS:
   void sendMessage(std::shared_ptr<ListResponseMessage>,ConnectionId);

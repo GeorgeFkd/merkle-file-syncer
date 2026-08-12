@@ -2,26 +2,28 @@
 
 NaiveSyncServer::NaiveSyncServer(QObject *parent) : QObject(parent) {}
 
-
-void NaiveSyncServer::handleRequest(ListRequestMessage* msg, ConnectionId connId, const FSMetadata* updatedDb,const QString& username) {
+void NaiveSyncServer::onMessage(std::shared_ptr<ListRequestMessage> msg,
+                                ConnectionId connId,
+                                const FSMetadata *updatedDb,
+                                const QString &username) {
   assert(msg->directory.isEmpty() &&
-           "When using naive, directory should be empty, otherwise we should filter by path, this is not tested yet");
+         "When using naive, directory should be empty, otherwise we should "
+         "filter by path, this is not tested yet");
   auto response = std::make_shared<ListResponseMessage>();
-    auto files = updatedDb->allTrackedFiles(username);
-    for (const auto &path : files) {
-      auto mtime = updatedDb->readMtime(username, path);
-      assert(mtime.has_value() && "File in storage must have a DB mtime entry");
-      auto hash = updatedDb->readHash(username,path);
-      assert(hash.has_value() && "File in storage must have DB hash entry");
-      response->entries.append({path, mtime.value(), false,hash.value()});
-    }
+  auto files = updatedDb->allTrackedFiles(username);
+  for (const auto &path : files) {
+    auto mtime = updatedDb->readMtime(username, path);
+    assert(mtime.has_value() && "File in storage must have a DB mtime entry");
+    auto hash = updatedDb->readHash(username, path);
+    assert(hash.has_value() && "File in storage must have DB hash entry");
+    response->entries.append({path, mtime.value(), false, hash.value()});
+  }
 
-    auto tombstones = updatedDb->allTombstones(username);
-    for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
-      const QString &path = it.key();
-      //we dont need hashes for tombstoned entries
-      response->entries.append({path, it.value(), true});
-    }
-    Q_EMIT(sendMessage(response,connId));
+  auto tombstones = updatedDb->allTombstones(username);
+  for (auto it = tombstones.cbegin(); it != tombstones.cend(); ++it) {
+    const QString &path = it.key();
+    // we dont need hashes for tombstoned entries
+    response->entries.append({path, it.value(), true});
+  }
+  Q_EMIT(sendMessage(response, connId));
 }
-

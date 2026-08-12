@@ -6,7 +6,7 @@ FileTransferServer::FileTransferServer(FileStorage *storage, QObject *parent)
   wireProtocolToStorage();
 }
 
-void FileTransferServer::onMessage(const Message *msg,
+void FileTransferServer::onMessage(std::shared_ptr<Message> msg,
                                    FileTransferServerInMsgCtx ctx) {
   // remember which user this client maps to, so storage side-effect signals
   // (which only carry clientId) can resolve the user for storage calls.

@@ -31,13 +31,13 @@ public:
   void cancelUpload(const QString &path);
   void cancelDownload(const QString &path);
 
-  void onMessage(const Message *msg);
+  void onMessage(std::shared_ptr<Message> msg);
 
   qint8 progressPercent(const QString &path);
-  void handleAckChunkOfUpload(const ACKChunkReceived *ackMsg);
-  void handleUploadSizeReceived(const SpecifyChunkSizeUpload *msg);
-  void handleDownloadSizeReceived(const SpecifyChunkSizeDownload *msg);
-  void handleChunkReceived(const ChunkTransfer *msg);
+  void handleAckChunkOfUpload(std::shared_ptr<ACKChunkReceived> ackMsg);
+  void handleUploadSizeReceived(std::shared_ptr<SpecifyChunkSizeUpload> msg);
+  void handleDownloadSizeReceived(std::shared_ptr<SpecifyChunkSizeDownload> msg);
+  void handleChunkReceived(std::shared_ptr<ChunkTransfer> msg);
 
 Q_SIGNALS:
   void uploadCompleted(QString path);

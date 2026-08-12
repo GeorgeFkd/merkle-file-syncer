@@ -112,11 +112,11 @@ NodesDiff runMerkle(FSMetadata &clientDb, FSMetadata &serverDb) {
 
   QObject::connect(&protocolClient, &MerkleSyncClient::messageSendRequest,
                    [&](std::shared_ptr<MerkleProtocolMessage> msg) {
-                     protocolServer.handleRequest(msg, serverTree, "test-conn");
+                     protocolServer.onMessage(msg, serverTree, "test-conn");
                    });
   QObject::connect(&protocolServer, &MerkleSyncServer::messageSendRequest,
                    [&](QString, std::shared_ptr<MerkleProtocolMessage> msg) {
-                     protocolClient.handleResponse(msg, clientTree);
+                     protocolClient.onMessage(msg, clientTree);
                    });
 
   bool completed = false;
@@ -135,13 +135,13 @@ NodesDiff runNaive(FSMetadata &clientDb, FSMetadata &serverDb) {
 
   QObject::connect(&protocolClient, &NaiveSyncClient::sendMessage,
                    [&](std::shared_ptr<ListRequestMessage> req) {
-                     protocolServer.handleRequest(req.get(), "test-conn",
-                                                  &serverDb, kUser);
+                     protocolServer.onMessage(req, "test-conn", &serverDb,
+                                              kUser);
                    });
   QObject::connect(
       &protocolServer, &NaiveSyncServer::sendMessage,
       [&](std::shared_ptr<ListResponseMessage> resp, ConnectionId) {
-        protocolClient.handleListingResponse(resp.get(), &clientDb, kUser);
+        protocolClient.onMessage(resp, &clientDb, kUser);
       });
 
   bool completed = false;

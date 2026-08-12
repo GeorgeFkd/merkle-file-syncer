@@ -52,7 +52,7 @@ private:
   // --- Auth / sessions ---
   SessionRegistry sessionStore;
   QHash<QIODevice *, QString> socketToTokenMap;
-  std::shared_ptr<AuthResponseMessage> handleAuth(AuthMessage *msg);
+  std::shared_ptr<AuthResponseMessage> handleAuth(std::shared_ptr<AuthMessage> msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
   std::optional<QString> getUsername(const QString &token);
@@ -75,7 +75,7 @@ private:
   QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---
-  std::shared_ptr<SyncRequestMessage> handleSyncRequest(SyncRequestMessage *msg);
+  std::shared_ptr<SyncRequestMessage> handleSyncRequest(std::shared_ptr<SyncRequestMessage> msg);
   std::shared_ptr<SyncRequestMessage>
   handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                      const std::optional<QDateTime> &storedMtime);
@@ -91,11 +91,11 @@ private:
   std::shared_ptr<AckChunkMessage> handleChunkUpload(ChunkTransferMessage *msg);
   void handleAckChunk(AckChunkMessage *msg);
   // --- Listing ---
-  void handleListRequest(ListRequestMessage *msg);
+  void handleListRequest(std::shared_ptr<ListRequestMessage> msg);
   NaiveSyncServer naiveSyncServer;
 
   // --- Merkle negotiation ---
-  void handleMerkleSyncRequest(MerkleSyncMessage *msg);
+  void handleMerkleSyncRequest(std::shared_ptr<MerkleSyncMessage> msg);
   MerkleSyncServer merkleSyncServer;
 
   // --- Misc ---

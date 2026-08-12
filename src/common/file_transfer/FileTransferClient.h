@@ -17,7 +17,7 @@ public:
   void cancelUpload(const QString &path);
   void cancelDownload(const QString &path);
 
-  void onMessage(const Message*);
+  void onMessage(std::shared_ptr<Message>);
 
 Q_SIGNALS:
 	void uploadCompleted(QString path);

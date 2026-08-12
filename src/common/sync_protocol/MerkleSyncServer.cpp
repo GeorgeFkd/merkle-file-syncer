@@ -4,7 +4,7 @@
 #include "Messages.h"
 MerkleSyncServer::MerkleSyncServer(QObject *parent) : QObject(parent) {}
 
-void MerkleSyncServer::handleRequest(std::shared_ptr<MerkleProtocolMessage> msg,
+void MerkleSyncServer::onMessage(std::shared_ptr<MerkleProtocolMessage> msg,
                                      MerkleTree *tree, ConnectionId conn) {
   auto response = std::make_shared<MerkleProtocolMessage>();
 

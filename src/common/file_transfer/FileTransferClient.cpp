@@ -79,25 +79,6 @@ void FileTransferClient::wireProtocolToTransport() {
                    &FileTransferClient::downloadProgress);
 }
 
-// ---- inbound dispatch: Message* -> the right protocol handler ----
-void FileTransferClient::onMessage(const Message *msg) {
-  switch (msg->type()) {
-  case MessageType::SpecifyChunkSizeUpload:
-    chunking.handleUploadSizeReceived(
-        static_cast<const SpecifyChunkSizeUpload *>(msg));
-    break;
-  case MessageType::SpecifyChunkSizeDownload:
-    chunking.handleDownloadSizeReceived(
-        static_cast<const SpecifyChunkSizeDownload *>(msg));
-    break;
-  case MessageType::ChunkTransfer:
-    chunking.handleChunkReceived(static_cast<const ChunkTransfer *>(msg));
-    break;
-  case MessageType::AckChunk:
-    chunking.handleAckChunkOfUpload(static_cast<const ACKChunkReceived *>(msg));
-    break;
-  default:
-    qDebug() << "FileTransferClient::onMessage: unhandled type";
-    break;
-  }
+void FileTransferClient::onMessage(std::shared_ptr<Message> msg) {
+  chunking.onMessage(msg);
 }

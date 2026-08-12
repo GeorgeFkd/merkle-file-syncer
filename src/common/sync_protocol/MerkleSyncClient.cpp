@@ -17,7 +17,7 @@ void MerkleSyncClient::startNegotiation(MerkleTree *tree) {
   Q_EMIT messageSendRequest(msg);
 }
 
-void MerkleSyncClient::handleResponse(std::shared_ptr<MerkleProtocolMessage> msg,
+void MerkleSyncClient::onMessage(std::shared_ptr<MerkleProtocolMessage> msg,
                                       MerkleTree *tree) {
   if (msg->phase == 2) {
     inProgress = false;
