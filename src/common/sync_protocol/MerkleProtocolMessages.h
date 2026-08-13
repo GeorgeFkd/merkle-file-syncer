@@ -18,7 +18,7 @@ struct MerkleProtocolMessage {
 
 
 inline std::shared_ptr<MerkleSyncMessage> toWireMessage(MerkleProtocolMessage* m) {
-  return std::make_shared<MerkleSyncMessage>(m->phase,m->depth,std::move(m->rootHash),std::move(m->fileEntriesPerChild));
+  return std::make_shared<MerkleSyncMessage>(m->depth,m->phase,std::move(m->rootHash),std::move(m->fileEntriesPerChild));
 }
 
 inline std::shared_ptr<MerkleProtocolMessage> toProtocolMessage(MerkleSyncMessage* w) {

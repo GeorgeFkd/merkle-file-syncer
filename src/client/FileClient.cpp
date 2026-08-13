@@ -38,6 +38,8 @@ void FileClient::configure(const FileClientConfig &config) {
   }
 
   transport->configure(serverName);
+  fileTransferClient =
+      std::make_unique<FileTransferClient>(fileStorage.get(), username);
 }
 
 LocalFileStorage *FileClient::getStorage() { return fileStorage.get(); }
@@ -76,6 +78,41 @@ void FileClient::setupConnections() {
                    this, &FileClient::handleNegotiationCompleted);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::handleNegotiationCompleted);
+
+  // transfer emits messages -> transport (stamp token like the other senders)
+  QObject::connect(
+      fileTransferClient.get(), &FileTransferClient::sendMessage, this,
+      [this](std::shared_ptr<Message> msg) {
+        msg->token = token;
+        if (msg->type() == MessageType::RequestChunkSizeUpload) {
+          auto spec = std::static_pointer_cast<RequestChunkSizeForUpload>(msg);
+          auto mtime = database.readMtime(username, spec->path);
+          auto hash = database.readHash(username, spec->path);
+          if (mtime) {
+            spec->mtime = *mtime;
+            qDebug() << "Mtime is: " << mtime;
+          } else {
+            qWarning() << "No mtime for path: " << spec->path;
+          }
+          if (hash) {
+            spec->hash = *hash;
+          } else {
+            qWarning() << "No hash for path: " << spec->path;
+          }
+          qDebug() << "Hash is: " << hash;
+        }
+        transport->send(msg);
+      });
+
+  // inbound messages -> transfer (it filters by type internally)
+  QObject::connect(transport.get(), &ClientTransport::messageReady,
+                   fileTransferClient.get(), &FileTransferClient::onMessage);
+
+  // upload completion
+  QObject::connect(fileTransferClient.get(),
+                   &FileTransferClient::uploadCompleted, this,
+                   &FileClient::onUploadCompleted);
+
   startTimer();
 }
 
@@ -136,14 +173,6 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     handleListResponse(std::static_pointer_cast<ListResponseMessage>(msg));
     break;
   }
-  case MessageType::ChunkTransfer: {
-    handleChunkDownload(static_cast<ChunkTransferMessage *>(msg.get()));
-    break;
-  }
-  case MessageType::AckChunk: {
-    handleChunkAck(static_cast<AckChunkMessage *>(msg.get()));
-    break;
-  }
   default: {
     handleUnrecognized(msg.get());
     break;
@@ -158,7 +187,7 @@ void FileClient::handleMerkleDirectoryListing(
   for (const auto &entry : msg->entries) {
     if (!entry.deleted) {
       qDebug() << "Hello";
-      resolveServerHasFileClientDoesnt(entry.path);
+      stageDownloadFor(entry.path);
       continue;
     }
     applyTombstone(entry.path, entry.mtime);
@@ -204,7 +233,7 @@ void FileClient::handleChunkDownload(ChunkTransferMessage *msg) {
 }
 
 void FileClient::checkSyncCompletionAndUnlock() {
-  if (pendingMessages == 0) {
+  if (pendingMessages == 0 && outstandingTransfers == 0) {
     currentlyDoingSyncOps = false;
     qDebug() << "All of current sync items have been synced.";
     Q_EMIT syncCompleted();
@@ -231,6 +260,7 @@ void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
   }
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server has newer version of:" << msg->path;
+    // this one is actually hit by almost all tests.
     applyServerVersion(msg->path, msg->contents);
     break;
   }
@@ -250,6 +280,8 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   }
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server rejected deletion, restoring:" << msg->path;
+    qDebug() << "Whole message in client:: handleDeleteResponse is: " << msg;
+    assert(false); // it is rightly hit by nowhere
     applyServerVersion(msg->path, msg->contents);
     break;
   }
@@ -288,47 +320,34 @@ void FileClient::flushOutboundCommands() {
 }
 
 void FileClient::stageUploadFor(const QString &path) {
-  auto contents = fileStorage->readFile(username, path);
-  if (!contents.has_value()) {
-    qDebug() << "Could not read file: " << path;
-    return;
-  }
-  auto mtime = fileStorage->getMtime(username, path);
-  commandsToSend.insert(path, buildSyncRequest(path, FileOperationType::Write,
-                                               contents.value(), mtime));
+  // auto contents = fileStorage->readFile(username, path);
+  // if (!contents.has_value()) {
+  //   qDebug() << "Could not read file: " << path;
+  //   return;
+  // }
+  // auto mtime = fileStorage->getMtime(username, path);
+  // commandsToSend.insert(path, buildSyncRequest(path,
+  // FileOperationType::Write,
+  //                                              contents.value(), mtime));
+  outstandingTransfers++;
+  fileTransferClient->startUpload(path);
+}
+
+void FileClient::onUploadCompleted(QString path) {
+  qDebug() << "Upload completed for:" << path;
+  // client already has this file recorded (from the scan); nothing to record.
+  transferDone();
+}
+
+void FileClient::transferDone() {
+  outstandingTransfers--;
+  checkSyncCompletionAndUnlock();
 }
 
 void FileClient::stageDownloadFor(const QString &path) {
   auto mtime = database.readMtime(username, path);
   commandsToSend.insert(
       path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
-}
-
-void FileClient::stageConflictResolution(const QString &path) {
-  stageUploadFor(path);
-}
-
-void FileClient::resolveServerHasFileClientDoesnt(const QString &path) {
-  auto found = getMerkleTree()->find(path);
-  bool clientHasLiveNode = found.has_value() && !std::get<1>(*found);
-  if (database.readMtime(username, path).has_value() && !clientHasLiveNode) {
-    stageDeleteFor(path, QDateTime::currentDateTime());
-  } else {
-    stageDownloadFor(path);
-  }
-}
-
-void FileClient::stageNewFilesForSending(const QList<QString> &newFiles) {
-  for (const auto &p : newFiles) {
-    stageUploadFor(p);
-  }
-}
-
-void FileClient::stageDeletedFilesForSending(
-    const QSet<QString> &deletedFiles) {
-  for (const auto &p : deletedFiles) {
-    stageDeleteFor(p, QDateTime::currentDateTime());
-  }
 }
 
 void FileClient::clientTick() {
@@ -494,7 +513,7 @@ void FileClient::stageDirectoryUpload(const QString &dirPath) {
   }
 }
 
-void FileClient::requestDirectoryList(const QString &dirPath) {
+void FileClient::stageDirectoryDownload(const QString &dirPath) {
   auto req = std::make_shared<ListRequestMessage>();
   qDebug() << "Directory requested is: " << dirPath;
   req->useMerkle = syncStrategy == SyncStrategy::Merkle;
@@ -559,11 +578,11 @@ void FileClient::handleNegotiationCompleted(
       stageDirectoryUpload(path);
   }
   for (const auto &[isFile, path] : negotiationState.diffEntries.onlyInRight) {
-    if (!isFile) {
-      requestDirectoryList(path);
-      continue;
+    if (isFile) {
+      stageDownloadFor(path);
+    } else {
+      stageDirectoryDownload(path);
     }
-    resolveServerHasFileClientDoesnt(path);
   }
 
   // client's version is newer -> upload it (overwrites the server's stale copy)
@@ -575,18 +594,6 @@ void FileClient::handleNegotiationCompleted(
   for (const auto &path : negotiationState.diffEntries.modifiedWinsRight) {
     stageDownloadFor(path);
   }
-
-  // for (const auto &path : negotiationState.diffEntries.modified) {
-  //   // modified should only contain files at this point — directories
-  //   // were resolved during negotiation via directoriesToCheckWithServer
-  //   {
-  //     auto found = getMerkleTree()->find(path);
-  //     assert(found.has_value());
-  //     auto &[node, isTombstoned] = *found;
-  //     assert(node->type == FileType::File);
-  //   }
-  //   stageConflictResolution(path);
-  // }
 
   for (const auto &[path, deletedAt] :
        negotiationState.diffEntries.deletionWinsLeft) {
@@ -647,5 +654,6 @@ void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
 }
 
 void FileClient::handleUnrecognized(Message *msg) {
-  qDebug() << "Unrecognized message type received from client";
+  qDebug() << "received message at client that cannot be handled internally, "
+              "should probably send to a different subsystem";
 }

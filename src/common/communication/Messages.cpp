@@ -1,6 +1,7 @@
 #include "Messages.h"
 #include <qnamespace.h>
-void MessageProtocol::sendMessage(QIODevice *socket, std::shared_ptr<Message> msg) {
+void MessageProtocol::sendMessage(QIODevice *socket,
+                                  std::shared_ptr<Message> msg) {
   QByteArray payload = msg->serialize();
   QByteArray frame;
   QDataStream stream(&frame, QIODevice::WriteOnly);
@@ -9,8 +10,9 @@ void MessageProtocol::sendMessage(QIODevice *socket, std::shared_ptr<Message> ms
   socket->write(frame);
 }
 
-void MessageProtocol::processBuffer(QIODevice *socket, QByteArray &buffer,
-                                    std::function<void(std::shared_ptr<Message>)> handler) {
+void MessageProtocol::processBuffer(
+    QIODevice *socket, QByteArray &buffer,
+    std::function<void(std::shared_ptr<Message>)> handler) {
   buffer.append(socket->readAll());
   while (buffer.size() >= 4) {
     QDataStream stream(buffer);
@@ -134,7 +136,7 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
   if (type == "list_response")
     return ListResponseMessage::deserialize(obj);
   if (type == "chunk_transfer")
-    return ChunkTransferMessage::deserialize(obj);
+    return ChunkTransfer::deserialize(obj);
   if (type == "ack_chunk")
     return ACKChunkReceived::deserialize(obj);
   if (type == "request_chunk_size_upload")
@@ -147,7 +149,7 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return SpecifyChunkSizeDownload::deserialize(obj);
   if (type == "cancel_transfer")
     return CancelTransfer::deserialize(obj);
-
+  qDebug() << "Type of message actually is: " << type;
   return nullptr;
 }
 
@@ -375,7 +377,7 @@ QDebug operator<<(QDebug debug, const MerkleSyncMessage &msg) {
 MessageType ChunkTransfer::type() const { return MessageType::ChunkTransfer; }
 QByteArray ChunkTransfer::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "chunk_transfer";
   obj["token"] = token;
   obj["filepath"] = filepath;
   obj["partNumber"] = static_cast<qint64>(partNumber);
@@ -411,7 +413,7 @@ TransferFailure fromString(const QString &tf) {
   if (tf == "bytes_corrupted") {
     return TransferFailure::BYTES_CORRUPTED;
   }
-  if(tf == "none"){
+  if (tf == "none") {
     return TransferFailure::NONE;
   }
   assert(false);
@@ -420,7 +422,7 @@ TransferFailure fromString(const QString &tf) {
 MessageType ACKChunkReceived::type() const { return MessageType::AckChunk; }
 QByteArray ACKChunkReceived::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "ack_chunk";
   obj["token"] = token;
   obj["path"] = path;
   obj["partNumber"] = static_cast<qint64>(partNumber);
@@ -445,10 +447,12 @@ MessageType RequestChunkSizeForUpload::type() const {
 }
 QByteArray RequestChunkSizeForUpload::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "request_chunk_size_upload";
   obj["token"] = token;
   obj["path"] = path;
   obj["fileSize"] = static_cast<qint64>(fileSize);
+  obj["mtime"] = mtime.toString(Qt::ISODateWithMs);
+  obj["hash"] = QString::fromLatin1(hash.toBase64());
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<RequestChunkSizeForUpload>
@@ -457,6 +461,9 @@ RequestChunkSizeForUpload::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
   msg->fileSize = static_cast<quint64>(obj["fileSize"].toInteger());
+  msg->hash = QByteArray::fromHex(obj["hash"].toString().toLatin1());
+  msg->mtime = QDateTime::fromString(obj["mtime"].toString(),
+                                          Qt::ISODateWithMs);
   return msg;
 }
 
@@ -466,7 +473,7 @@ MessageType RequestChunkSizeForDownload::type() const {
 }
 QByteArray RequestChunkSizeForDownload::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "request_chunk_size_download";
   obj["token"] = token;
   obj["path"] = path;
   obj["chunkSizeDesired"] = static_cast<qint64>(chunkSizeDesired);
@@ -488,7 +495,7 @@ MessageType SpecifyChunkSizeUpload::type() const {
 }
 QByteArray SpecifyChunkSizeUpload::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "specify_chunk_size_upload";
   obj["token"] = token;
   obj["path"] = path;
   obj["chunkSize"] = static_cast<qint64>(chunkSize);
@@ -511,7 +518,7 @@ MessageType SpecifyChunkSizeDownload::type() const {
 }
 QByteArray SpecifyChunkSizeDownload::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "specify_chunk_size_download";
   obj["token"] = token;
   obj["path"] = path;
   obj["chunkSize"] = static_cast<qint64>(chunkSize);
@@ -532,7 +539,7 @@ SpecifyChunkSizeDownload::deserialize(const QJsonObject &obj) {
 MessageType CancelTransfer::type() const { return MessageType::CancelTransfer; }
 QByteArray CancelTransfer::serialize() const {
   QJsonObject obj;
-  obj["type"] = static_cast<int>(type());
+  obj["type"] = "cancel_transfer";
   obj["token"] = token;
   obj["path"] = path;
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
@@ -565,8 +572,9 @@ QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
   return dbg;
 }
 
-QDebug operator<<(QDebug dbg, const FileEntry& entry) {
+QDebug operator<<(QDebug dbg, const FileEntry &entry) {
   QDebugStateSaver saver(dbg);
-  dbg.nospace() << "FileEntry: mtime: " << entry.mtime << "path: " << entry.path << "deleted: " << entry.deleted;
+  dbg.nospace() << "FileEntry: mtime: " << entry.mtime << "path: " << entry.path
+                << "deleted: " << entry.deleted;
   return dbg;
 }

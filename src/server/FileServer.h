@@ -1,6 +1,7 @@
 #pragma once
 #include "FSMetadata.h"
 #include "FileStorage.h"
+#include "FileTransferServer.h"
 #include "MerkleSyncServer.h"
 #include "MerkleTree.h"
 #include "Messages.h"
@@ -48,11 +49,20 @@ private:
   void onNewConnection();
   void dispatch(QIODevice *socket, std::shared_ptr<Message> msg);
   void setupNewSocketConnection(QLocalSocket *socket);
+  static QString metaKey(const ClientId &conn, const QString &path) {
+    return conn + "|" + path;
+  }
+  ConnectionId connIdFor(QIODevice *socket) const {
+    return socketToTokenMap.value(socket);
+  }
+  QHash<QString, QPair<QByteArray, QDateTime>> pendingTransfersMetadata;
 
   // --- Auth / sessions ---
   SessionRegistry sessionStore;
   QHash<QIODevice *, QString> socketToTokenMap;
-  std::shared_ptr<AuthResponseMessage> handleAuth(std::shared_ptr<AuthMessage> msg);
+  QIODevice *getSocketFromToken(const QString &token);
+  std::shared_ptr<AuthResponseMessage>
+  handleAuth(std::shared_ptr<AuthMessage> msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
   std::optional<QString> getUsername(const QString &token);
@@ -75,17 +85,18 @@ private:
   QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---
-  std::shared_ptr<SyncRequestMessage> handleSyncRequest(std::shared_ptr<SyncRequestMessage> msg);
+  std::shared_ptr<SyncRequestMessage>
+  handleSyncRequest(std::shared_ptr<SyncRequestMessage> msg);
   std::shared_ptr<SyncRequestMessage>
   handleWriteRequest(SyncRequestMessage *msg, const QString &path,
                      const std::optional<QDateTime> &storedMtime);
   std::shared_ptr<SyncRequestMessage>
   handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
                       const std::optional<QDateTime> &storedMtime);
-  std::shared_ptr<SyncRequestMessage> trySendNewerFile(const QString &username,
-                                      const QString &path,
-                                      const QDateTime &serverMtime,
-                                      FileOperationType op);
+  std::shared_ptr<SyncRequestMessage>
+  trySendNewerFile(const QString &username, const QString &path,
+                   const QDateTime &serverMtime, FileOperationType op);
+  std::unique_ptr<FileTransferServer> fileTransferServer;
 
   // --- Chunking ---
   std::shared_ptr<AckChunkMessage> handleChunkUpload(ChunkTransferMessage *msg);

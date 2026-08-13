@@ -1,4 +1,5 @@
 #pragma once
+#include "FileTransferClient.h"
 #include "ClientTransport.h"
 #include "FSMetadata.h"
 #include "LocalFileStorage.h"
@@ -125,18 +126,18 @@ private:
   void stageUploadFor(const QString &path);
   void stageDownloadFor(const QString &path);
   void stageDeleteFor(const QString &path, const QDateTime &deletedAt);
-  void stageConflictResolution(const QString &path);
   void stageDirectoryUpload(const QString &dirPath);
-  void stageNewFilesForSending(const QList<QString> &files);
-  void stageDeletedFilesForSending(const QSet<QString> &files);
-  void resolveServerHasFileClientDoesnt(const QString &path);
+  std::unique_ptr<FileTransferClient> fileTransferClient;
+  int outstandingTransfers = 0;
+  void onUploadCompleted(QString path);
+  void transferDone();
 
   // --- Server file listing (naive pull + merkle apply expansion) ---
   bool awaitingListResponse = false;
   bool inMerkleApply = false;
 
   int pendingDirectoryRequests = 0;
-  void requestDirectoryList(const QString &dirPath);
+  void stageDirectoryDownload(const QString &dirPath);
   void handleListResponse(std::shared_ptr<ListResponseMessage> msg);
   void handleMerkleDirectoryListing(std::shared_ptr<ListResponseMessage> msg);
 

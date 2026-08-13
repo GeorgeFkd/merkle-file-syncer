@@ -209,6 +209,8 @@ class RequestChunkSizeForUpload : public Message {
 public:
   QString path;
   quint64 fileSize = 0;
+  QByteArray hash;
+  QDateTime mtime;
 
   RequestChunkSizeForUpload() = default;
   RequestChunkSizeForUpload(QString path, quint64 fileSize)
@@ -240,6 +242,7 @@ public:
   QString path;
   quint64 chunkSize = 0;
   quint32 totalChunks = 0;
+
 
   SpecifyChunkSizeUpload() = default;
   SpecifyChunkSizeUpload(QString path, quint64 chunkSize, quint32 totalChunks)

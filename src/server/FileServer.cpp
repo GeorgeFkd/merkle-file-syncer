@@ -21,6 +21,7 @@ void FileServer::configure(FileServerConfig config) {
     break;
   }
   transport->configure(config.serverName);
+  fileTransferServer = std::make_unique<FileTransferServer>(fileStorage.get());
 }
 
 void FileServer::start() {
@@ -30,15 +31,23 @@ void FileServer::start() {
 
 FileServer::~FileServer() {}
 
+QIODevice *FileServer::getSocketFromToken(const QString &token) {
+  auto socket = socketToTokenMap.key(token, nullptr);
+  if (!socket) {
+    qDebug() << "could not find socket of token: " << token;
+    return nullptr;
+  }
+  return socket;
+}
+
 void FileServer::setupConnections() {
   setupSocketConnections();
 
   QObject::connect(this, &FileServer::sendMessage, this,
                    [this](std::shared_ptr<Message> msg) {
-                     auto socket = socketToTokenMap.key(msg->token, nullptr);
+                     auto *socket = getSocketFromToken(msg->token);
                      if (!socket) {
-                       qDebug()
-                           << "generic message send request could not be sent.";
+                       qWarning() << "Nullptr for socket returned";
                        return;
                      }
                      transport->send(socket, msg);
@@ -47,9 +56,9 @@ void FileServer::setupConnections() {
   QObject::connect(
       &merkleSyncServer, &MerkleSyncServer::messageSendRequest, this,
       [this](ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> proto) {
-        auto socket = socketToTokenMap.key(conn, nullptr);
+        auto *socket = getSocketFromToken(conn);
         if (!socket) {
-          qDebug() << "messageSend request could not be sent.";
+          qWarning() << "Nullptr for socket returned";
           return;
         }
         auto wire = toWireMessage(proto.get());
@@ -58,13 +67,70 @@ void FileServer::setupConnections() {
       });
   QObject::connect(&naiveSyncServer, &NaiveSyncServer::sendMessage, this,
                    [this](std::shared_ptr<Message> msg, ConnectionId conn) {
-                     auto socket = socketToTokenMap.key(conn, nullptr);
+                     auto *socket = getSocketFromToken(conn);
                      if (!socket) {
                        qDebug()
                            << "could not send message of Naive Sync Server";
                        return;
                      }
                      transport->send(socket, msg);
+                   });
+  // transfer sends -> socket (translate ClientId -> socket, no QIODevice to
+  // subsystem)
+  QObject::connect(
+      fileTransferServer.get(), &FileTransferServer::sendMessage, this,
+      [this](std::shared_ptr<Message> msg, FileTransferServerOutMsgCtx out) {
+        auto *socket = getSocketFromToken(out.clientId);
+        if (!socket) {
+          qWarning() << "Nullptr for socket returned";
+          return;
+        }
+        msg->token = out.clientId;
+
+        // if (msg->type() == MessageType::SpecifyChunkSizeUpload) {
+        //   auto *m = static_cast<SpecifyChunkSizeUpload *>(msg.get());
+        //   qDebug() << "Inserted at: " << m->path << "  " << m->hash << "  "
+        //            << m->mtime;
+        //   auto username = getUserFrom(msg.get());
+        //   auto hash = database.readHash(username, m->path);
+        //   auto mtime = database.readMtime(username, m->path);
+        //   assert(
+        //       hash.has_value() && mtime.has_value() &&
+        //       "Should have hash and mtime when specifying chunk size upload");
+        //   QPair<QByteArray, QDateTime> metadata = {hash.value(), mtime.value()};
+        //   pendingTransfersMetadata.insert(metaKey(out.clientId, m->path), metadata);
+        //   qDebug() << "Inserted at: " << m->path << "  " << metadata.second
+        //            << "  " << metadata.first;
+        // }
+        transport->send(socket, msg);
+      });
+
+  // upload completion -> record in server DB/tree
+  QObject::connect(
+      fileTransferServer.get(), &FileTransferServer::uploadCompleted, this,
+      [this](ClientId conn, QString path) {
+        auto user = getUsername(conn); // conn is the token
+        if (!user)
+          return;
+        auto fileMetadata = pendingTransfersMetadata.take(metaKey(conn, path));
+        recordFile(*user, path, fileMetadata.second, fileMetadata.first);
+      });
+  QObject::connect(transport.get(), &ServerTransport::messageReady, this,
+                   [this](QIODevice *socket, std::shared_ptr<Message> msg) {
+                     ClientId conn = socketToTokenMap.value(socket);
+                     FileTransferServerInMsgCtx ctx{
+                         conn, getUsername(conn).value_or(QString{})};
+                     fileTransferServer->onMessage(msg, ctx);
+                   });
+  // cleanup on fail/cancel
+  QObject::connect(fileTransferServer.get(), &FileTransferServer::uploadFailed,
+                   this, [this](ClientId conn, QString path) {
+                     pendingTransfersMetadata.remove(metaKey(conn, path));
+                   });
+  QObject::connect(fileTransferServer.get(),
+                   &FileTransferServer::uploadCancelled, this,
+                   [this](ClientId conn, QString path) {
+                     pendingTransfersMetadata.remove(metaKey(conn, path));
                    });
 }
 
@@ -98,7 +164,7 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
     qDebug() << "Failed to deserialize message";
     return;
   }
-  qDebug() << "Dispatching message to handler.";
+  qDebug() << "Dispatching server message to handler." << (int)msg->type();
   switch (msg->type()) {
   case MessageType::ClientAuth: {
     auto resp = handleAuth(std::static_pointer_cast<AuthMessage>(msg));
@@ -125,14 +191,13 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
     handleListRequest(actualMsg);
     break;
   }
-  case MessageType::ChunkTransfer: {
-    auto resp =
-        handleChunkUpload(static_cast<ChunkTransferMessage *>(msg.get()));
-    transport->send(socket, resp);
-    break;
-  }
-  case MessageType::AckChunk: {
-    handleAckChunk(static_cast<AckChunkMessage *>(msg.get()));
+    case MessageType::RequestChunkSizeUpload: {
+    auto *m = static_cast<RequestChunkSizeForUpload *>(msg.get());
+      auto username = getUserFrom(msg.get());
+          QPair<QByteArray, QDateTime> metadata = {m->hash, m->mtime};
+          pendingTransfersMetadata.insert(metaKey(msg->token, m->path), metadata);
+          qDebug() << "Inserted at: " << m->path << "  " << metadata.second
+                   << "  " << metadata.first;
     break;
   }
   default: {

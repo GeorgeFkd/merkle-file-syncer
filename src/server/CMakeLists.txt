@@ -15,6 +15,7 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/sync_protocol
          ${CMAKE_SOURCE_DIR}/src/common/fs_metadata
          ${CMAKE_SOURCE_DIR}/src/common/hashing
+         ${CMAKE_SOURCE_DIR}/src/common/file_transfer
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib
@@ -28,7 +29,9 @@ target_link_libraries(
           Qt6::Core
           Qt6::Network
 merkle_protocol_server
-naive_protocol_server)
+naive_protocol_server
+file_transfer_server
+)
 set_target_properties(merkle_server_lib PROPERTIES AUTOMOC ON)
 
 # qt_add_executable(merkle_server main.cpp)
