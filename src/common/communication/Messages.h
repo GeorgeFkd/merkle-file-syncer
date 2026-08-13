@@ -242,7 +242,8 @@ public:
   QString path;
   quint64 chunkSize = 0;
   quint32 totalChunks = 0;
-
+  
+  
 
   SpecifyChunkSizeUpload() = default;
   SpecifyChunkSizeUpload(QString path, quint64 chunkSize, quint32 totalChunks)
@@ -259,6 +260,9 @@ public:
   QString path;
   quint64 chunkSize = 0;
   quint32 totalChunks = 0;
+
+  QByteArray hash;
+  QDateTime mtime;
 
   SpecifyChunkSizeDownload() = default;
   SpecifyChunkSizeDownload(QString path, quint64 chunkSize, quint32 totalChunks)

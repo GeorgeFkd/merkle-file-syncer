@@ -1,5 +1,26 @@
 #include "Messages.h"
 #include <qnamespace.h>
+
+// --- serde helpers ---
+static QJsonValue dateTimeToJson(const QDateTime &dt) {
+  return dt.toString(Qt::ISODateWithMs);
+}
+static QDateTime dateTimeFromJson(const QJsonValue &v) {
+  return QDateTime::fromString(v.toString(), Qt::ISODateWithMs);
+}
+static QJsonValue hexToJson(const QByteArray &b) {
+  return QString::fromLatin1(b.toHex());
+}
+static QByteArray hexFromJson(const QJsonValue &v) {
+  return QByteArray::fromHex(v.toString().toLatin1());
+}
+static QJsonValue base64ToJson(const QByteArray &b) {
+  return QString::fromLatin1(b.toBase64());
+}
+static QByteArray base64FromJson(const QJsonValue &v) {
+  return QByteArray::fromBase64(v.toString().toLatin1());
+}
+
 void MessageProtocol::sendMessage(QIODevice *socket,
                                   std::shared_ptr<Message> msg) {
   QByteArray payload = msg->serialize();
@@ -39,7 +60,7 @@ QByteArray MerkleSyncMessage::serialize() const {
   obj["token"] = token;
   obj["depth"] = depth;
   obj["phase"] = phase;
-  obj["rootHash"] = QString::fromLatin1(rootHash.toHex());
+  obj["rootHash"] = hexToJson(rootHash);
   QJsonArray childrenArray;
   for (const auto &[childPath, entries] : fileEntriesPerChild) {
     QJsonObject childObj;
@@ -48,12 +69,12 @@ QByteArray MerkleSyncMessage::serialize() const {
     for (const auto &entry : entries) {
       QJsonObject entryObj;
       entryObj["path"] = entry.path;
-      entryObj["hash"] = QString::fromLatin1(entry.hash.toHex());
-      entryObj["mtime"] = entry.mtime.toString(Qt::ISODateWithMs);
+      entryObj["hash"] = hexToJson(entry.hash);
+      entryObj["mtime"] = dateTimeToJson(entry.mtime);
       entryObj["type"] =
           entry.filetype == FileType::Directory ? "directory" : "file";
       entryObj["isTombstone"] = entry.isTombstone;
-      entryObj["deletedAt"] = entry.deletedAt.toString(Qt::ISODateWithMs);
+      entryObj["deletedAt"] = dateTimeToJson(entry.deletedAt);
       entriesArray.append(entryObj);
     }
     childObj["entries"] = entriesArray;
@@ -69,7 +90,7 @@ MerkleSyncMessage::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->depth = obj["depth"].toInt();
   msg->phase = static_cast<qint8>(obj["phase"].toInt());
-  msg->rootHash = QByteArray::fromHex(obj["rootHash"].toString().toLatin1());
+  msg->rootHash = hexFromJson(obj["rootHash"]);
   for (const auto &childVal : obj["fileEntriesPerChild"].toArray()) {
     QJsonObject childObj = childVal.toObject();
     QString childPath = childObj["path"].toString();
@@ -78,15 +99,13 @@ MerkleSyncMessage::deserialize(const QJsonObject &obj) {
       QJsonObject entryObj = entryVal.toObject();
       MerkleEntry entry;
       entry.path = entryObj["path"].toString();
-      entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
-      entry.mtime = QDateTime::fromString(entryObj["mtime"].toString(),
-                                          Qt::ISODateWithMs);
+      entry.hash = hexFromJson(entryObj["hash"]);
+      entry.mtime = dateTimeFromJson(entryObj["mtime"]);
       entry.filetype = entryObj["type"].toString() == "directory"
                            ? FileType::Directory
                            : FileType::File;
       entry.isTombstone = entryObj["isTombstone"].toBool(false);
-      entry.deletedAt = QDateTime::fromString(entryObj["deletedAt"].toString(),
-                                              Qt::ISODateWithMs);
+      entry.deletedAt = dateTimeFromJson(entryObj["deletedAt"]);
       entries.append(entry);
     }
     msg->fileEntriesPerChild.append({childPath, entries});
@@ -119,7 +138,6 @@ QByteArray AuthResponseMessage::serialize() const {
 }
 
 std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
-
   QJsonObject obj = QJsonDocument::fromJson(data).object();
   QString type = obj["type"].toString();
 
@@ -162,8 +180,8 @@ QByteArray SyncRequestMessage::serialize() const {
   obj["type"] = "sync_request";
   obj["token"] = token;
   obj["path"] = path;
-  obj["contents"] = QString::fromUtf8(contents.toBase64());
-  obj["mtime"] = operationTime.toString(Qt::ISODateWithMs);
+  obj["contents"] = base64ToJson(contents);
+  obj["mtime"] = dateTimeToJson(operationTime);
   switch (operationStatus) {
   case FileOperationStatus::DoIt:
     obj["opstatus"] = "doit";
@@ -181,7 +199,6 @@ QByteArray SyncRequestMessage::serialize() const {
     obj["opstatus"] = "serverhasnewer";
     break;
   }
-
   switch (operationType) {
   case FileOperationType::Write:
     obj["optype"] = "write";
@@ -190,7 +207,6 @@ QByteArray SyncRequestMessage::serialize() const {
     obj["optype"] = "delete";
     break;
   }
-
   return QJsonDocument(obj).toJson();
 }
 
@@ -216,15 +232,12 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<SyncRequestMessage>();
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
-  msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
-  msg->operationTime =
-      QDateTime::fromString(obj["mtime"].toString(), Qt::ISODateWithMs);
-
+  msg->contents = base64FromJson(obj["contents"]);
+  msg->operationTime = dateTimeFromJson(obj["mtime"]);
   if (obj["optype"].toString() == "write")
     msg->operationType = FileOperationType::Write;
   else if (obj["optype"].toString() == "delete")
     msg->operationType = FileOperationType::Delete;
-
   if (obj["opstatus"].toString() == "doit")
     msg->operationStatus = FileOperationStatus::DoIt;
   else if (obj["opstatus"].toString() == "done")
@@ -235,7 +248,6 @@ SyncRequestMessage::deserialize(const QJsonObject &obj) {
     msg->operationStatus = FileOperationStatus::Pending;
   else if (obj["opstatus"].toString() == "serverhasnewer")
     msg->operationStatus = FileOperationStatus::ServerHasNewer;
-
   return msg;
 }
 
@@ -272,9 +284,9 @@ QByteArray ListResponseMessage::serialize() const {
   for (const auto &entry : entries) {
     QJsonObject entryObj;
     entryObj["path"] = entry.path;
-    entryObj["mtime"] = entry.mtime.toString(Qt::ISODateWithMs);
+    entryObj["mtime"] = dateTimeToJson(entry.mtime);
     entryObj["deleted"] = entry.deleted;
-    entryObj["hash"] = QString::fromLatin1(entry.hash.toBase64());
+    entryObj["hash"] = base64ToJson(entry.hash);
     entriesArray.append(entryObj);
   }
   obj["entries"] = entriesArray;
@@ -288,10 +300,9 @@ ListResponseMessage::deserialize(const QJsonObject &obj) {
     QJsonObject entryObj = val.toObject();
     FileEntry entry;
     entry.path = entryObj["path"].toString();
-    entry.mtime =
-        QDateTime::fromString(entryObj["mtime"].toString(), Qt::ISODateWithMs);
+    entry.mtime = dateTimeFromJson(entryObj["mtime"]);
     entry.deleted = entryObj["deleted"].toBool();
-    entry.hash = QByteArray::fromHex(entryObj["hash"].toString().toLatin1());
+    entry.hash = base64FromJson(entryObj["hash"]);
     msg->entries.append(entry);
   }
   return msg;
@@ -306,7 +317,7 @@ ChunkTransferMessage::deserialize(const QJsonObject &obj) {
   auto msg = std::make_unique<ChunkTransferMessage>();
   msg->partNumber = obj["partNumber"].toInt();
   msg->path = obj["path"].toString();
-  msg->contents = QByteArray::fromBase64(obj["contents"].toString().toUtf8());
+  msg->contents = base64FromJson(obj["contents"]);
   msg->token = obj["token"].toString();
   return msg;
 }
@@ -314,7 +325,7 @@ ChunkTransferMessage::deserialize(const QJsonObject &obj) {
 QByteArray ChunkTransferMessage::serialize() const {
   QJsonObject obj;
   obj["type"] = "chunk_transfer";
-  obj["contents"] = QString::fromUtf8(this->contents.toBase64());
+  obj["contents"] = base64ToJson(this->contents);
   obj["token"] = this->token;
   obj["path"] = this->path;
   obj["partNumber"] = this->partNumber;
@@ -347,7 +358,6 @@ QByteArray AckChunkMessage::serialize() const {
     break;
   }
   }
-
   obj["partNumber"] = this->partNumber;
   obj["failureMsg"] = this->failureMsg;
   obj["token"] = this->token;
@@ -382,8 +392,8 @@ QByteArray ChunkTransfer::serialize() const {
   obj["filepath"] = filepath;
   obj["partNumber"] = static_cast<qint64>(partNumber);
   obj["chunkSize"] = static_cast<qint64>(chunkSize);
-  obj["bytes"] = QString::fromLatin1(bytes.toBase64());
-  obj["hash"] = QString::fromLatin1(hash.toBase64());
+  obj["bytes"] = base64ToJson(bytes);
+  obj["hash"] = base64ToJson(hash);
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<ChunkTransfer>
@@ -393,31 +403,27 @@ ChunkTransfer::deserialize(const QJsonObject &obj) {
   msg->filepath = obj["filepath"].toString();
   msg->partNumber = static_cast<quint32>(obj["partNumber"].toInteger());
   msg->chunkSize = static_cast<quint32>(obj["chunkSize"].toInteger());
-  msg->bytes = QByteArray::fromBase64(obj["bytes"].toString().toLatin1());
-  msg->hash = QByteArray::fromBase64(obj["hash"].toString().toLatin1());
+  msg->bytes = base64FromJson(obj["bytes"]);
+  msg->hash = base64FromJson(obj["hash"]);
   return msg;
 }
 
 QString toString(TransferFailure tf) {
-  if (tf == TransferFailure::BYTES_CORRUPTED) {
+  if (tf == TransferFailure::BYTES_CORRUPTED)
     return "bytes_corrupted";
-  }
-  if (tf == TransferFailure::NONE) {
+  if (tf == TransferFailure::NONE)
     return "none";
-  }
-
   assert(false);
 }
 
 TransferFailure fromString(const QString &tf) {
-  if (tf == "bytes_corrupted") {
+  if (tf == "bytes_corrupted")
     return TransferFailure::BYTES_CORRUPTED;
-  }
-  if (tf == "none") {
+  if (tf == "none")
     return TransferFailure::NONE;
-  }
   assert(false);
 }
+
 // --- ACKChunkReceived ---
 MessageType ACKChunkReceived::type() const { return MessageType::AckChunk; }
 QByteArray ACKChunkReceived::serialize() const {
@@ -451,8 +457,8 @@ QByteArray RequestChunkSizeForUpload::serialize() const {
   obj["token"] = token;
   obj["path"] = path;
   obj["fileSize"] = static_cast<qint64>(fileSize);
-  obj["mtime"] = mtime.toString(Qt::ISODateWithMs);
-  obj["hash"] = QString::fromLatin1(hash.toBase64());
+  obj["mtime"] = dateTimeToJson(mtime);
+  obj["hash"] = base64ToJson(hash);
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<RequestChunkSizeForUpload>
@@ -461,9 +467,8 @@ RequestChunkSizeForUpload::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
   msg->fileSize = static_cast<quint64>(obj["fileSize"].toInteger());
-  msg->hash = QByteArray::fromHex(obj["hash"].toString().toLatin1());
-  msg->mtime = QDateTime::fromString(obj["mtime"].toString(),
-                                          Qt::ISODateWithMs);
+  msg->hash = base64FromJson(obj["hash"]);
+  msg->mtime = dateTimeFromJson(obj["mtime"]);
   return msg;
 }
 
@@ -523,6 +528,8 @@ QByteArray SpecifyChunkSizeDownload::serialize() const {
   obj["path"] = path;
   obj["chunkSize"] = static_cast<qint64>(chunkSize);
   obj["totalChunks"] = static_cast<qint64>(totalChunks);
+  obj["mtime"] = dateTimeToJson(mtime);
+  obj["hash"] = base64ToJson(hash);
   return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 std::unique_ptr<SpecifyChunkSizeDownload>
@@ -532,6 +539,8 @@ SpecifyChunkSizeDownload::deserialize(const QJsonObject &obj) {
   msg->path = obj["path"].toString();
   msg->chunkSize = static_cast<quint64>(obj["chunkSize"].toInteger());
   msg->totalChunks = static_cast<quint32>(obj["totalChunks"].toInteger());
+  msg->mtime = dateTimeFromJson(obj["mtime"]);
+  msg->hash = base64FromJson(obj["hash"]);
   return msg;
 }
 
