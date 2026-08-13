@@ -67,8 +67,6 @@ void FileTransferClient::wireProtocolToTransport() {
   // protocol lifecycle signals -> re-emit as our own
   QObject::connect(&chunking, &ChunkingClient::uploadCompleted, this,
                    &FileTransferClient::uploadCompleted);
-  QObject::connect(&chunking, &ChunkingClient::downloadCompleted, this,
-                   &FileTransferClient::downloadCompleted);
   QObject::connect(&chunking, &ChunkingClient::uploadCancelled, this,
                    &FileTransferClient::uploadCancelled);
   QObject::connect(&chunking, &ChunkingClient::downloadCancelled, this,

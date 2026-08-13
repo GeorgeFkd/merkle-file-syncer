@@ -130,7 +130,9 @@ private:
   std::unique_ptr<FileTransferClient> fileTransferClient;
   int outstandingTransfers = 0;
   void onUploadCompleted(QString path);
+  void onDownloadCompleted(QString path);
   void transferDone();
+  QHash<QString,QPair<QByteArray,QDateTime>> pendingDownloadMetadata;
 
   // --- Server file listing (naive pull + merkle apply expansion) ---
   bool awaitingListResponse = false;

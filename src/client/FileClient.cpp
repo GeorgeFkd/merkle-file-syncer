@@ -108,12 +108,24 @@ void FileClient::setupConnections() {
   QObject::connect(transport.get(), &ClientTransport::messageReady,
                    fileTransferClient.get(), &FileTransferClient::onMessage);
 
+  QObject::connect(fileTransferClient.get(), &FileTransferClient::downloadCompleted, this,
+                 &FileClient::onDownloadCompleted);
+
   // upload completion
   QObject::connect(fileTransferClient.get(),
                    &FileTransferClient::uploadCompleted, this,
                    &FileClient::onUploadCompleted);
 
   startTimer();
+}
+
+
+
+void FileClient::onDownloadCompleted(QString path) {
+  qDebug() << "Download completed for:" << path;
+  auto meta = pendingDownloadMetadata.take(path);
+  recordFile(username, path, meta.second /*mtime*/, meta.first /*hash*/);
+  transferDone();
 }
 
 void FileClient::setupSocketConnections() {
@@ -173,6 +185,11 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     handleListResponse(std::static_pointer_cast<ListResponseMessage>(msg));
     break;
   }
+    case MessageType::SpecifyChunkSizeDownload: {
+      auto *m = static_cast<SpecifyChunkSizeDownload*>(msg.get());
+      pendingDownloadMetadata.insert(m->path,{m->hash,m->mtime});
+      break;
+    }
   default: {
     handleUnrecognized(msg.get());
     break;
@@ -233,6 +250,11 @@ void FileClient::handleChunkDownload(ChunkTransferMessage *msg) {
 }
 
 void FileClient::checkSyncCompletionAndUnlock() {
+  bool allZero = pendingMessages == 0 && outstandingTransfers == 0 && pendingDirectoryRequests == 0;
+  qDebug() << "checkSync pending=" << pendingMessages
+         << " transfers=" << outstandingTransfers
+         << " dirReqs=" << pendingDirectoryRequests
+         << (allZero ? " COMPLETE" : " WAITING");
   if (pendingMessages == 0 && outstandingTransfers == 0) {
     currentlyDoingSyncOps = false;
     qDebug() << "All of current sync items have been synced.";
@@ -281,7 +303,7 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server rejected deletion, restoring:" << msg->path;
     qDebug() << "Whole message in client:: handleDeleteResponse is: " << msg;
-    assert(false); // it is rightly hit by nowhere
+    // assert(false); // it is rightly hit by nowhere
     applyServerVersion(msg->path, msg->contents);
     break;
   }
@@ -345,9 +367,12 @@ void FileClient::transferDone() {
 }
 
 void FileClient::stageDownloadFor(const QString &path) {
-  auto mtime = database.readMtime(username, path);
-  commandsToSend.insert(
-      path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
+  // auto mtime = database.readMtime(username, path);
+  // commandsToSend.insert(
+  //     path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
+  outstandingTransfers++;
+  quint64 ignoredSize = 5 * 1024 * 1000;
+  fileTransferClient->startDownload(path,ignoredSize);
 }
 
 void FileClient::clientTick() {

@@ -85,23 +85,17 @@ void FileServer::setupConnections() {
           qWarning() << "Nullptr for socket returned";
           return;
         }
-        msg->token = out.clientId;
-
-        // if (msg->type() == MessageType::SpecifyChunkSizeUpload) {
-        //   auto *m = static_cast<SpecifyChunkSizeUpload *>(msg.get());
-        //   qDebug() << "Inserted at: " << m->path << "  " << m->hash << "  "
-        //            << m->mtime;
-        //   auto username = getUserFrom(msg.get());
-        //   auto hash = database.readHash(username, m->path);
-        //   auto mtime = database.readMtime(username, m->path);
-        //   assert(
-        //       hash.has_value() && mtime.has_value() &&
-        //       "Should have hash and mtime when specifying chunk size upload");
-        //   QPair<QByteArray, QDateTime> metadata = {hash.value(), mtime.value()};
-        //   pendingTransfersMetadata.insert(metaKey(out.clientId, m->path), metadata);
-        //   qDebug() << "Inserted at: " << m->path << "  " << metadata.second
-        //            << "  " << metadata.first;
-        // }
+        if (msg->type() == MessageType::SpecifyChunkSizeDownload) {
+      auto* m = static_cast<SpecifyChunkSizeDownload*>(msg.get());
+      auto user = getUsername(out.clientId);
+      if (user) {
+        auto mtime = database.readMtime(*user, m->path);
+        auto hash  = database.readHash(*user, m->path);
+          assert(mtime.has_value() && hash.has_value() && "Server should have hash and mtime when sending SpecifyChunkSizeDownload");
+        if (mtime) m->mtime = *mtime;   // server HAS these now
+        if (hash)  m->hash  = *hash;
+      }
+      }
         transport->send(socket, msg);
       });
 
