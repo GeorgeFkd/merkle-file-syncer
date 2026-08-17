@@ -14,7 +14,7 @@ enum class TransportProtocol { LocalSocket, Tcp };
 enum class MessageType {
   ClientAuth,
   ServerAuthResponse,
-  SyncRequest,
+  DeleteRequest,
   MerkleSync,
   ListRequest,
   ListResponse,
@@ -95,16 +95,15 @@ public:
 enum class FileOperationType { Write, Delete };
 enum class FileOperationStatus { DoIt, Error, ServerHasNewer, Done, Pending };
 
-class SyncRequestMessage : public Message {
+class DeleteRequestMessage : public Message {
 public:
   QString path;
   QByteArray contents;
   QDateTime operationTime;
-  FileOperationType operationType;
   FileOperationStatus operationStatus;
   MessageType type() const override;
   QByteArray serialize() const override;
-  static std::unique_ptr<SyncRequestMessage>
+  static std::unique_ptr<DeleteRequestMessage>
   deserialize(const QJsonObject &obj);
 };
 
@@ -286,7 +285,7 @@ public:
   static std::unique_ptr<CancelTransfer> deserialize(const QJsonObject &obj);
 };
 
-QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg);
+QDebug operator<<(QDebug dbg, const DeleteRequestMessage &msg);
 QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack);
 
 

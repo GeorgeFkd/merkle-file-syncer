@@ -145,8 +145,8 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return AuthMessage::deserialize(obj);
   if (type == "auth_response")
     return AuthResponseMessage::deserialize(obj);
-  if (type == "sync_request")
-    return SyncRequestMessage::deserialize(obj);
+  if (type == "delete_request")
+    return DeleteRequestMessage::deserialize(obj);
   if (type == "merkle_sync")
     return MerkleSyncMessage::deserialize(obj);
   if (type == "list_request")
@@ -171,13 +171,13 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
   return nullptr;
 }
 
-MessageType SyncRequestMessage::type() const {
-  return MessageType::SyncRequest;
+MessageType DeleteRequestMessage::type() const {
+  return MessageType::DeleteRequest;
 }
 
-QByteArray SyncRequestMessage::serialize() const {
+QByteArray DeleteRequestMessage::serialize() const {
   QJsonObject obj;
-  obj["type"] = "sync_request";
+  obj["type"] = "delete_request";
   obj["token"] = token;
   obj["path"] = path;
   obj["contents"] = base64ToJson(contents);
@@ -197,14 +197,6 @@ QByteArray SyncRequestMessage::serialize() const {
     break;
   case FileOperationStatus::ServerHasNewer:
     obj["opstatus"] = "serverhasnewer";
-    break;
-  }
-  switch (operationType) {
-  case FileOperationType::Write:
-    obj["optype"] = "write";
-    break;
-  case FileOperationType::Delete:
-    obj["optype"] = "delete";
     break;
   }
   return QJsonDocument(obj).toJson();
@@ -227,17 +219,13 @@ AuthResponseMessage::deserialize(const QJsonObject &obj) {
   return msg;
 }
 
-std::unique_ptr<SyncRequestMessage>
-SyncRequestMessage::deserialize(const QJsonObject &obj) {
-  auto msg = std::make_unique<SyncRequestMessage>();
+std::unique_ptr<DeleteRequestMessage>
+DeleteRequestMessage::deserialize(const QJsonObject &obj) {
+  auto msg = std::make_unique<DeleteRequestMessage>();
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
   msg->contents = base64FromJson(obj["contents"]);
   msg->operationTime = dateTimeFromJson(obj["mtime"]);
-  if (obj["optype"].toString() == "write")
-    msg->operationType = FileOperationType::Write;
-  else if (obj["optype"].toString() == "delete")
-    msg->operationType = FileOperationType::Delete;
   if (obj["opstatus"].toString() == "doit")
     msg->operationStatus = FileOperationStatus::DoIt;
   else if (obj["opstatus"].toString() == "done")
@@ -570,12 +558,11 @@ QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack) {
   return dbg;
 }
 
-QDebug operator<<(QDebug dbg, const SyncRequestMessage &msg) {
+QDebug operator<<(QDebug dbg, const DeleteRequestMessage &msg) {
   QDebugStateSaver saver(dbg);
   dbg.nospace() << "SyncRequestMessage(path=" << msg.path
                 << ", contentsSize=" << msg.contents.size()
                 << ", operationTime=" << msg.operationTime
-                << ", operationType=" << static_cast<int>(msg.operationType)
                 << ", operationStatus=" << static_cast<int>(msg.operationStatus)
                 << ")";
   return dbg;

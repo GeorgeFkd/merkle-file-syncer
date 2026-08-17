@@ -57,8 +57,20 @@ void FileClient::setupConnections() {
 
   QObject::connect(this, &FileClient::authenticated, this,
                    &FileClient::onAuthenticated);
-  QObject::connect(this, &FileClient::outboundFileCommandsReady, this,
-                   &FileClient::flushOutboundCommands);
+  setupFileTransferConnections();
+  setupNegotiationConnections();
+
+  startTimer();
+}
+
+void FileClient::onDownloadCompleted(QString path) {
+  qDebug() << "Download completed for:" << path;
+  auto meta = pendingDownloadMetadata.take(path);
+  recordFile(username, path, meta.second /*mtime*/, meta.first /*hash*/);
+  transferDone();
+}
+
+void FileClient::setupNegotiationConnections() {
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::messageSendRequest,
                    this,
                    [this](std::shared_ptr<MerkleProtocolMessage> protoMsg) {
@@ -78,6 +90,16 @@ void FileClient::setupConnections() {
                    this, &FileClient::handleNegotiationCompleted);
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::negotiationCompleted,
                    this, &FileClient::handleNegotiationCompleted);
+}
+
+void FileClient::setupFileTransferConnections() {
+  QObject::connect(this, &FileClient::outboundFileCommandsReady, this,
+                   &FileClient::flushOutboundCommands);
+
+  QObject::connect(this, &FileClient::downloadRequested, this,
+                   &FileClient::stageDownloadFor);
+  QObject::connect(this, &FileClient::uploadRequested, this,
+                   &FileClient::stageUploadFor);
 
   // transfer emits messages -> transport (stamp token like the other senders)
   QObject::connect(
@@ -108,24 +130,14 @@ void FileClient::setupConnections() {
   QObject::connect(transport.get(), &ClientTransport::messageReady,
                    fileTransferClient.get(), &FileTransferClient::onMessage);
 
-  QObject::connect(fileTransferClient.get(), &FileTransferClient::downloadCompleted, this,
-                 &FileClient::onDownloadCompleted);
+  QObject::connect(fileTransferClient.get(),
+                   &FileTransferClient::downloadCompleted, this,
+                   &FileClient::onDownloadCompleted);
 
   // upload completion
   QObject::connect(fileTransferClient.get(),
                    &FileTransferClient::uploadCompleted, this,
                    &FileClient::onUploadCompleted);
-
-  startTimer();
-}
-
-
-
-void FileClient::onDownloadCompleted(QString path) {
-  qDebug() << "Download completed for:" << path;
-  auto meta = pendingDownloadMetadata.take(path);
-  recordFile(username, path, meta.second /*mtime*/, meta.first /*hash*/);
-  transferDone();
 }
 
 void FileClient::setupSocketConnections() {
@@ -173,8 +185,8 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     handleAuthResponse(static_cast<AuthResponseMessage *>(msg.get()));
     break;
   }
-  case MessageType::SyncRequest: {
-    handleSyncResponse(static_cast<SyncRequestMessage *>(msg.get()));
+  case MessageType::DeleteRequest: {
+    handleDeleteResponse(static_cast<DeleteRequestMessage *>(msg.get()));
     break;
   }
   case MessageType::MerkleSync: {
@@ -185,11 +197,11 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     handleListResponse(std::static_pointer_cast<ListResponseMessage>(msg));
     break;
   }
-    case MessageType::SpecifyChunkSizeDownload: {
-      auto *m = static_cast<SpecifyChunkSizeDownload*>(msg.get());
-      pendingDownloadMetadata.insert(m->path,{m->hash,m->mtime});
-      break;
-    }
+  case MessageType::SpecifyChunkSizeDownload: {
+    auto *m = static_cast<SpecifyChunkSizeDownload *>(msg.get());
+    pendingDownloadMetadata.insert(m->path, {m->hash, m->mtime});
+    break;
+  }
   default: {
     handleUnrecognized(msg.get());
     break;
@@ -203,8 +215,7 @@ void FileClient::handleMerkleDirectoryListing(
     std::shared_ptr<ListResponseMessage> msg) {
   for (const auto &entry : msg->entries) {
     if (!entry.deleted) {
-      qDebug() << "Hello";
-      stageDownloadFor(entry.path);
+      Q_EMIT downloadRequested(entry.path);
       continue;
     }
     applyTombstone(entry.path, entry.mtime);
@@ -231,30 +242,13 @@ void FileClient::handleListResponse(std::shared_ptr<ListResponseMessage> msg) {
   naiveSyncClient.onMessage(msg, &database, username);
 }
 
-void FileClient::handleSyncResponse(SyncRequestMessage *msg) {
-  pendingMessages--;
-  if (msg->operationType == FileOperationType::Write) {
-    handleWriteResponse(msg);
-  } else if (msg->operationType == FileOperationType::Delete) {
-    handleDeleteResponse(msg);
-  }
-  checkSyncCompletionAndUnlock();
-}
-
-void FileClient::handleChunkAck(AckChunkMessage *msg) {
-  qDebug() << "received ack chunk message on client";
-}
-
-void FileClient::handleChunkDownload(ChunkTransferMessage *msg) {
-  qDebug() << "received chunk transfer message on client";
-}
-
 void FileClient::checkSyncCompletionAndUnlock() {
-  bool allZero = pendingMessages == 0 && outstandingTransfers == 0 && pendingDirectoryRequests == 0;
+  bool allZero = pendingMessages == 0 && outstandingTransfers == 0 &&
+                 pendingDirectoryRequests == 0;
   qDebug() << "checkSync pending=" << pendingMessages
-         << " transfers=" << outstandingTransfers
-         << " dirReqs=" << pendingDirectoryRequests
-         << (allZero ? " COMPLETE" : " WAITING");
+           << " transfers=" << outstandingTransfers
+           << " dirReqs=" << pendingDirectoryRequests
+           << (allZero ? " COMPLETE" : " WAITING");
   if (pendingMessages == 0 && outstandingTransfers == 0) {
     currentlyDoingSyncOps = false;
     qDebug() << "All of current sync items have been synced.";
@@ -265,35 +259,8 @@ void FileClient::checkSyncCompletionAndUnlock() {
   }
 }
 
-void FileClient::handleWriteResponse(SyncRequestMessage *msg) {
-
-  switch (msg->operationStatus) {
-  case FileOperationStatus::Done: {
-    qDebug() << "Write acked for:" << msg->path;
-    auto localMtime = fileStorage->getMtime(username, msg->path);
-    if (localMtime.has_value()) {
-      recordFile(username, msg->path, localMtime.value(),
-                 hashContents(msg->contents));
-    } else {
-      qDebug() << "handleWriteResponse: no local mtime after write for"
-               << msg->path;
-    }
-    break;
-  }
-  case FileOperationStatus::ServerHasNewer: {
-    qDebug() << "Server has newer version of:" << msg->path;
-    // this one is actually hit by almost all tests.
-    applyServerVersion(msg->path, msg->contents);
-    break;
-  }
-  default: {
-    qDebug() << "handleWriteResponse: unhandled status for" << msg->path;
-    break;
-  }
-  }
-}
-
-void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
+void FileClient::handleDeleteResponse(DeleteRequestMessage *msg) {
+  pendingMessages--;
   switch (msg->operationStatus) {
   case FileOperationStatus::Done: {
     qDebug() << "Delete acked for:" << msg->path;
@@ -303,7 +270,7 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
   case FileOperationStatus::ServerHasNewer: {
     qDebug() << "Server rejected deletion, restoring:" << msg->path;
     qDebug() << "Whole message in client:: handleDeleteResponse is: " << msg;
-    // assert(false); // it is rightly hit by nowhere
+    assert(false); // it is still hit
     applyServerVersion(msg->path, msg->contents);
     break;
   }
@@ -312,10 +279,12 @@ void FileClient::handleDeleteResponse(SyncRequestMessage *msg) {
     break;
   }
   }
+  checkSyncCompletionAndUnlock();
 }
 
 void FileClient::applyServerVersion(const QString &path,
                                     const QByteArray &contents) {
+  qDebug() << "Applying server version for path: " << path;
   if (contents.isEmpty()) {
     qDebug() << "applyServerVersion: empty contents for" << path;
     return;
@@ -342,15 +311,6 @@ void FileClient::flushOutboundCommands() {
 }
 
 void FileClient::stageUploadFor(const QString &path) {
-  // auto contents = fileStorage->readFile(username, path);
-  // if (!contents.has_value()) {
-  //   qDebug() << "Could not read file: " << path;
-  //   return;
-  // }
-  // auto mtime = fileStorage->getMtime(username, path);
-  // commandsToSend.insert(path, buildSyncRequest(path,
-  // FileOperationType::Write,
-  //                                              contents.value(), mtime));
   outstandingTransfers++;
   fileTransferClient->startUpload(path);
 }
@@ -367,12 +327,9 @@ void FileClient::transferDone() {
 }
 
 void FileClient::stageDownloadFor(const QString &path) {
-  // auto mtime = database.readMtime(username, path);
-  // commandsToSend.insert(
-  //     path, buildSyncRequest(path, FileOperationType::Write, {}, mtime));
   outstandingTransfers++;
   quint64 ignoredSize = 5 * 1024 * 1000;
-  fileTransferClient->startDownload(path,ignoredSize);
+  fileTransferClient->startDownload(path, ignoredSize);
 }
 
 void FileClient::clientTick() {
@@ -402,10 +359,6 @@ void FileClient::naiveTick() {
   auto result = scanFilesystemForChanges();
   applyChangesToDb(result);
   naiveSyncClient.startNegotiation();
-  // ListRequestMessage req;
-  // req.token = token;
-  // awaitingListResponse = true;
-  // transport->send(req);
 }
 
 LocalChangeSet FileClient::scanFilesystemForChanges() const {
@@ -533,7 +486,7 @@ void FileClient::stageDirectoryUpload(const QString &dirPath) {
   auto files = fileStorage->listFiles(username);
   for (const auto &path : files) {
     if (path == dirPath || path.startsWith(dirPath + "/")) {
-      stageUploadFor(path);
+      Q_EMIT uploadRequested(path);
     }
   }
 }
@@ -550,32 +503,17 @@ void FileClient::stageDirectoryDownload(const QString &dirPath) {
 
 void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
-  auto msg = std::make_shared<SyncRequestMessage>();
+  auto msg = std::make_shared<DeleteRequestMessage>();
   msg->token = token;
   msg->path = path;
   msg->contents = {};
   msg->operationTime = deletedAt;
-  msg->operationType = FileOperationType::Delete;
   msg->operationStatus = FileOperationStatus::DoIt;
   commandsToSend.insert(path, msg);
   MerkleTree *merkleTree = getMerkleTree();
   if (merkleTree) {
     merkleTree->deleteFile(path, deletedAt);
   }
-}
-
-std::shared_ptr<SyncRequestMessage>
-FileClient::buildSyncRequest(const QString &path, FileOperationType op,
-                             const QByteArray &contents,
-                             const std::optional<QDateTime> &mtime) {
-  auto msg = std::make_shared<SyncRequestMessage>();
-  msg->token = token;
-  msg->path = path;
-  msg->contents = contents;
-  msg->operationTime = mtime.has_value() ? mtime.value() : QDateTime();
-  msg->operationType = op;
-  msg->operationStatus = FileOperationStatus::DoIt;
-  return msg;
 }
 
 void FileClient::handleNegotiationCompleted(
@@ -597,14 +535,15 @@ void FileClient::handleNegotiationCompleted(
 
   // File-level cases first; directories deferred for next iteration
   for (const auto &[isFile, path] : negotiationState.diffEntries.onlyInLeft) {
-    if (isFile)
-      stageUploadFor(path);
-    else
+    if (isFile) {
+      Q_EMIT uploadRequested(path);
+    } else {
       stageDirectoryUpload(path);
+    }
   }
   for (const auto &[isFile, path] : negotiationState.diffEntries.onlyInRight) {
     if (isFile) {
-      stageDownloadFor(path);
+      Q_EMIT downloadRequested(path);
     } else {
       stageDirectoryDownload(path);
     }
@@ -612,12 +551,12 @@ void FileClient::handleNegotiationCompleted(
 
   // client's version is newer -> upload it (overwrites the server's stale copy)
   for (const auto &path : negotiationState.diffEntries.modifiedWinsLeft) {
-    stageUploadFor(path);
+    Q_EMIT uploadRequested(path);
   }
 
   // server's version is newer -> download it (overwrites our stale copy)
   for (const auto &path : negotiationState.diffEntries.modifiedWinsRight) {
-    stageDownloadFor(path);
+    Q_EMIT downloadRequested(path);
   }
 
   for (const auto &[path, deletedAt] :

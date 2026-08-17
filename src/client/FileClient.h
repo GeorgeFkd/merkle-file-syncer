@@ -66,6 +66,8 @@ Q_SIGNALS:
   void syncCompleted();
   void authenticated();
   void outboundFileCommandsReady();
+  void downloadRequested(QString path);
+  void uploadRequested(QString path);
 
 private:
   // --- Identity / config ---
@@ -86,6 +88,8 @@ private:
   void onDisconnected();
   void onAuthenticated();
   void setupSocketConnections();
+  void setupNegotiationConnections();
+  void setupFileTransferConnections();
   QString getDeviceName();
   void handleAuthResponse(AuthResponseMessage *);
 
@@ -116,13 +120,9 @@ private:
   void applyTombstone(const QString &path, const QDateTime &mtime);
 
   // --- Outbound command staging ---
-  QHash<QString, std::shared_ptr<SyncRequestMessage>> commandsToSend;
+  QHash<QString, std::shared_ptr<DeleteRequestMessage>> commandsToSend;
   int pendingMessages = 0;
   void flushOutboundCommands();
-  std::shared_ptr<SyncRequestMessage>
-  buildSyncRequest(const QString &path, FileOperationType op,
-                   const QByteArray &contents,
-                   const std::optional<QDateTime> &mtime);
   void stageUploadFor(const QString &path);
   void stageDownloadFor(const QString &path);
   void stageDeleteFor(const QString &path, const QDateTime &deletedAt);
@@ -152,12 +152,8 @@ private:
   NaiveSyncClient naiveSyncClient;
 
   // --- Sync response handling ---
-  void handleSyncResponse(SyncRequestMessage *msg);
-  void handleWriteResponse(SyncRequestMessage *msg);
-  void handleDeleteResponse(SyncRequestMessage *msg);
+  void handleDeleteResponse(DeleteRequestMessage *msg);
   void applyServerVersion(const QString &path, const QByteArray &contents);
-  void handleChunkDownload(ChunkTransferMessage *msg);
-  void handleChunkAck(AckChunkMessage *msg);
 
   // --- Misc ---
   void handleUnrecognized(Message *msg);

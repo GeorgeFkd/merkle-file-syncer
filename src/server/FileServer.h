@@ -41,15 +41,20 @@ private:
   std::unique_ptr<ServerTransport> transport;
   QLocalServer server;
   QString serverUrl;
-  QHash<QIODevice *, QByteArray> buffers;
   void setupConnections();
   void setupSocketConnections();
+
+  void setupNegotiationConnections();
+  void setupFileTransferConnections();
   void onSocketDisconnected(QIODevice *socket);
   void onSocketReadyRead(QIODevice *socket);
   void onNewConnection();
   void dispatch(QIODevice *socket, std::shared_ptr<Message> msg);
   void setupNewSocketConnection(QLocalSocket *socket);
-  static QString metaKey(const ClientId &conn, const QString &path) {
+
+  void sendToClient(const QString& token, std::shared_ptr<Message> msg);
+
+  static QString transferMetadataKey(const ClientId &conn, const QString &path) {
     return conn + "|" + path;
   }
   ConnectionId connIdFor(QIODevice *socket) const {
@@ -65,7 +70,7 @@ private:
   handleAuth(std::shared_ptr<AuthMessage> msg);
   bool verifyUserCredentials(const QString &username, const QString &password);
   std::optional<Session> resolveSession(const QString &token);
-  std::optional<QString> getUsername(const QString &token);
+  std::optional<QString> getUsernameFromToken(const QString &token);
   QString getUserFrom(Message *msg);
 
   // --- Storage / DB / per-user merkle trees ---
@@ -85,22 +90,12 @@ private:
   QByteArray hashContents(const QByteArray &contents);
 
   // --- Sync request handling ---
-  std::shared_ptr<SyncRequestMessage>
-  handleSyncRequest(std::shared_ptr<SyncRequestMessage> msg);
-  std::shared_ptr<SyncRequestMessage>
-  handleWriteRequest(SyncRequestMessage *msg, const QString &path,
-                     const std::optional<QDateTime> &storedMtime);
-  std::shared_ptr<SyncRequestMessage>
-  handleDeleteRequest(SyncRequestMessage *msg, const QString &path,
-                      const std::optional<QDateTime> &storedMtime);
-  std::shared_ptr<SyncRequestMessage>
-  trySendNewerFile(const QString &username, const QString &path,
-                   const QDateTime &serverMtime, FileOperationType op);
+  std::shared_ptr<DeleteRequestMessage>
+  handleDeleteRequest(std::shared_ptr<DeleteRequestMessage> msg);
   std::unique_ptr<FileTransferServer> fileTransferServer;
+  void fillDownloadMetadata(SpecifyChunkSizeDownload*,const QString& user);
+  void storeUploadMetadata(RequestChunkSizeForUpload *);
 
-  // --- Chunking ---
-  std::shared_ptr<AckChunkMessage> handleChunkUpload(ChunkTransferMessage *msg);
-  void handleAckChunk(AckChunkMessage *msg);
   // --- Listing ---
   void handleListRequest(std::shared_ptr<ListRequestMessage> msg);
   NaiveSyncServer naiveSyncServer;
