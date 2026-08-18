@@ -78,9 +78,10 @@ struct S3MerkleTcpTag {
 
 using SyncTestImplementations =
     ::testing::Types<S3MerkleLocalSocketTag, S3NaiveLocalSocketTag,
-                     LocalMerkleLocalSocketTag, LocalNaiveLocalSocketTag,
-                     S3MerkleTcpTag, S3NaiveTcpTag, LocalMerkleTcpTag,
-                     LocalNaiveTcpTag>;
+                     LocalMerkleLocalSocketTag, LocalNaiveLocalSocketTag>;
+// Tcp causes a bottleneck on how fast we can run the tests, testing ensures
+// that tcp and local servers behave the same S3MerkleTcpTag, S3NaiveTcpTag,
+// LocalMerkleTcpTag, LocalNaiveTcpTag>;
 
 struct LocalNaiveTag {
   using Storage = LocalStorageTag;
@@ -101,9 +102,6 @@ struct S3MerkleTag {
   using Storage = S3StorageTag;
   static constexpr SyncStrategy strategy = SyncStrategy::Merkle;
 };
-
-// using SyncTestImplementations =
-// ::testing::Types<S3MerkleTag,S3NaiveTag,LocalMerkleTag,LocalNaiveTag>;
 
 template <typename Tag> class SyncTest : public ::testing::Test {
 protected:
@@ -158,7 +156,7 @@ protected:
     delete clientDir;
     delete serverDir;
   }
-  
+
   void addMinimumDelayForTimestampOrdering() {
     QThread::msleep(
         5); // ensure subsequent operations have strictly newer wall-clock time
@@ -398,8 +396,12 @@ protected:
 
 using MultiDeviceSyncTestImplementations =
     ::testing::Types<LocalNaiveLocalSocketTag, S3NaiveLocalSocketTag,
-                     LocalNaiveTcpTag, S3NaiveTcpTag, LocalMerkleLocalSocketTag,
-                     LocalMerkleTcpTag, S3MerkleLocalSocketTag, S3MerkleTcpTag>;
+                     LocalMerkleLocalSocketTag, S3MerkleLocalSocketTag>;
+// LocalNaiveTcpTag,
+// S3NaiveTcpTag,
+// LocalMerkleTcpTag,
+// S3MerkleTcpTag,
+
 TYPED_TEST_SUITE(MultiDeviceSyncTest, MultiDeviceSyncTestImplementations);
 
 TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {

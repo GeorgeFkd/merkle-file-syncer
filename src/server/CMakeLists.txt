@@ -1,10 +1,11 @@
 qt_add_library(merkle_server_lib STATIC 
   FileServer.cpp 
-  LocalServerTransport.h 
-  LocalServerTransport.cpp 
-  ServerTransport.h 
-  TcpServerTransport.h 
-  TcpServerTransport.cpp)
+  # LocalServerTransport.h 
+  # LocalServerTransport.cpp 
+  # ServerTransport.h 
+  # TcpServerTransport.h 
+  # TcpServerTransport.cpp
+)
 
 target_include_directories(
   merkle_server_lib
@@ -16,11 +17,13 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/fs_metadata
          ${CMAKE_SOURCE_DIR}/src/common/hashing
          ${CMAKE_SOURCE_DIR}/src/common/file_transfer
+         ${CMAKE_SOURCE_DIR}/src/common/networking
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib
   PUBLIC messages
           hashing
+          network_server
           filesutil
           storage
           sessionregistry

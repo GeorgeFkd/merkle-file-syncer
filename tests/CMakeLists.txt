@@ -127,3 +127,19 @@ if(BUILD_S3_IMPL)
 endif()
 set_target_properties(file_transfer_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(file_transfer_tests)
+
+add_executable(networking_tests main.cpp networking_tests.cpp)
+target_link_libraries(
+  networking_tests
+    PRIVATE GTest::gtest
+            network_client
+            network_server
+            messages
+            Qt6::Core
+            Qt6::Network
+)
+target_include_directories(networking_tests PRIVATE ${TEST_COMMON_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/src/common/networking
+  ${CMAKE_SOURCE_DIR}/src/common/communication)
+set_target_properties(networking_tests PROPERTIES AUTOMOC ON)
+gtest_discover_tests(networking_tests)
