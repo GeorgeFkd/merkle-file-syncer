@@ -97,6 +97,7 @@ void FileServer::setupFileTransferConnections() {
           return;
         auto fileMetadata =
             pendingTransfersMetadata.take(transferMetadataKey(conn, path));
+        fileTransferServer->commitUpload(conn, path);
         recordFile(*user, path, fileMetadata.second, fileMetadata.first);
       });
   QObject::connect(transport.get(), &ServerTransport::messageReady, this,

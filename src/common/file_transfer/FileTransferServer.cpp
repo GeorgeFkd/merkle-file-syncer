@@ -38,6 +38,15 @@ void FileTransferServer::wireProtocolToTransport() {
                    &FileTransferServer::downloadCancelled);
 }
 
+void FileTransferServer::commitUpload(const ClientId &clientId,
+                                      const QString &path) {
+  if (storage->finishWrite(userForClient(clientId), path)) {
+    clientUsers.remove(clientId);
+  } else {
+    qDebug() << "Finish write returned false for: " << clientId << "," << path;
+  }
+}
+
 // ---- storage: chunking receive/complete/cancel -> storage lifecycle ----
 void FileTransferServer::wireProtocolToStorage() {
   // reader for downloads (server sends -> reads from storage)
@@ -80,19 +89,21 @@ void FileTransferServer::wireProtocolToStorage() {
                          storage->beginWrite(userForClient(clientId), path,
                                              static_cast<qint64>(totalSize),
                                              static_cast<qint64>(chunkSize));
+                     uncommittedUploads.append({clientId, path});
                      qDebug() << "beginWrite in server returned" << res;
                    });
 
   // upload complete -> finalize
   QObject::connect(&chunking, &ChunkingServer::uploadCompleted, this,
                    [this](const ClientId &clientId, const QString &path) {
-                     if (storage->finishWrite(userForClient(clientId), path)) {
-                       clientUsers.remove(clientId);
-                     } else {
-                       qDebug()
-                           << "Finish write returned false for: " << clientId
-                           << "," << path;
-                     }
+                     // if (storage->finishWrite(userForClient(clientId), path))
+                     // {
+                     //   clientUsers.remove(clientId);
+                     // } else {
+                     //   qDebug()
+                     //       << "Finish write returned false for: " << clientId
+                     //       << "," << path;
+                     // }
                    });
 
   // upload cancelled -> discard partial
@@ -100,6 +111,7 @@ void FileTransferServer::wireProtocolToStorage() {
                    [this](const ClientId &clientId, const QString &path) {
                      if (storage->abortWrite(userForClient(clientId), path)) {
                        clientUsers.remove(clientId);
+                       uncommittedUploads.removeOne({clientId, path});
                      } else {
                        qDebug()
                            << "Abort write returned false for: " << clientId

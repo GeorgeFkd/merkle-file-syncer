@@ -25,7 +25,7 @@ public:
   FileTransferServer(FileStorage *storage, QObject *parent = nullptr);
 
   void onMessage(std::shared_ptr<Message>, FileTransferServerInMsgCtx);
-
+  void commitUpload(const ClientId&,const QString& path);
 Q_SIGNALS:
   // clientId + path so a caller can observe per-client transfer lifecycle
   void uploadCompleted(ClientId, QString path);
@@ -47,5 +47,6 @@ private:
   FileStorage *storage;
   ChunkingServer chunking;
   QHash<ClientId, QString> clientUsers;
+  QList<QPair<ClientId,QString>> uncommittedUploads;
   QHash<ClientId, bool> uploadHasBegun;
 };

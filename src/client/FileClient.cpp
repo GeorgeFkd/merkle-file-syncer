@@ -66,6 +66,7 @@ void FileClient::setupConnections() {
 void FileClient::onDownloadCompleted(QString path) {
   qDebug() << "Download completed for:" << path;
   auto meta = pendingDownloadMetadata.take(path);
+  fileTransferClient->commitDownload(path);
   recordFile(username, path, meta.second /*mtime*/, meta.first /*hash*/);
   transferDone();
 }

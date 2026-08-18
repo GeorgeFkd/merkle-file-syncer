@@ -16,6 +16,7 @@ public:
   void startDownload(const QString &path, quint64 desiredChunkSize);
   void cancelUpload(const QString &path);
   void cancelDownload(const QString &path);
+  void commitDownload(const QString& path);
 
   void onMessage(std::shared_ptr<Message>);
 
@@ -30,7 +31,8 @@ Q_SIGNALS:
 private:
 	void wireProtocolToTransport();
 	void wireProtocolToStorage();
-
+	
+	QList<QString> uncommittedDownloads;
 	FileStorage *storage;
 	QString user;
 	ChunkingClient chunking;

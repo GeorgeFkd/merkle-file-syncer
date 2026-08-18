@@ -48,15 +48,20 @@ void FileTransferClient::wireProtocolToStorage() {
 
   QObject::connect(&chunking, &ChunkingClient::downloadCompleted, this,
                    [this](const QString &path) {
-                     storage->finishWrite(user, path);
+                     uncommittedDownloads.append(path);
                      Q_EMIT downloadCompleted(path);
                    });
 
   QObject::connect(&chunking, &ChunkingClient::downloadCancelled, this,
                    [this](const QString &path) {
                      storage->abortWrite(user, path);
+                     this->uncommittedDownloads.removeOne(path);
                      Q_EMIT downloadCancelled(path);
                    });
+}
+
+void FileTransferClient::commitDownload(const QString &path) {
+  storage->finishWrite(user, path);
 }
 
 void FileTransferClient::wireProtocolToTransport() {

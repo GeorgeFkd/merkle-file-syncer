@@ -75,8 +75,7 @@ protected:
     QObject::connect(
         client.get(), &FileTransferClient::sendMessage, server.get(),
         [this](std::shared_ptr<Message> msg) {
-          server->onMessage(msg,
-                            FileTransferServerInMsgCtx{clientId, user});
+          server->onMessage(msg, FileTransferServerInMsgCtx{clientId, user});
         },
         Qt::DirectConnection);
 
@@ -112,6 +111,11 @@ protected:
     QObject::connect(client.get(), &FileTransferClient::downloadCancelled,
                      client.get(),
                      [this](const QString &) { downloadCancelledFlag = true; });
+    QObject::connect(server.get(), &FileTransferServer::uploadCompleted,
+                     server.get(),
+                     [this](const ClientId &clientId, const QString &path) {
+                       server->commitUpload(clientId, path);
+                     });
   }
 
   QString runId;
@@ -153,6 +157,7 @@ TYPED_TEST(FileTransferTest, downloadRoundTrips) {
   this->client->startDownload(path, /*desiredChunkSize*/ 1024);
 
   ASSERT_TRUE(this->downloadDone);
+  this->client->commitDownload(path);
   auto onClient = this->clientStorage->readFile(this->user, path);
   ASSERT_TRUE(onClient.has_value());
   ASSERT_EQ(onClient.value(), original);
@@ -216,7 +221,7 @@ TYPED_TEST(FileTransferTest, cancelDownloadDiscardsPartial) {
 }
 
 // During an upload the server must not expose the file at its real path until
-// finishWrite commits it. 
+// finishWrite commits it.
 TYPED_TEST(FileTransferTest, fileInvisibleUntilFinish) {
   const QString path = "pending.bin";
   QByteArray original(S3_MIN_PART_SIZE + 4096, 'z');
