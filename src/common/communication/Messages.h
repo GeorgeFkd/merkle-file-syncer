@@ -290,19 +290,18 @@ QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack);
 
 
 //TODO: should later be in a types module or sth
-struct DeletionEntry {
+struct TimedFileEntry {
   QString path;
-  QDateTime deletedAt;
+  QDateTime mtime;
 };
 
 struct NodesDiff {
   QList<QPair<bool, QString>> onlyInLeft;
   QList<QPair<bool, QString>> onlyInRight;
-  // QList<QString> modified;
-  QList<QString> modifiedWinsLeft;
-  QList<QString> modifiedWinsRight;
-  QList<DeletionEntry> deletionWinsLeft;
-  QList<DeletionEntry> deletionWinsRight;
+  QList<TimedFileEntry> modifiedWinsLeft;
+  QList<TimedFileEntry> modifiedWinsRight;
+  QList<TimedFileEntry> deletionWinsLeft;
+  QList<TimedFileEntry> deletionWinsRight;
 };
 
 struct NegotiationState {

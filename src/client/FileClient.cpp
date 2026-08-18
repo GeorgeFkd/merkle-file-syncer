@@ -551,13 +551,13 @@ void FileClient::handleNegotiationCompleted(
   }
 
   // client's version is newer -> upload it (overwrites the server's stale copy)
-  for (const auto &path : negotiationState.diffEntries.modifiedWinsLeft) {
-    Q_EMIT uploadRequested(path);
+  for (const auto &entry: negotiationState.diffEntries.modifiedWinsLeft) {
+    Q_EMIT uploadRequested(entry.path);
   }
 
   // server's version is newer -> download it (overwrites our stale copy)
-  for (const auto &path : negotiationState.diffEntries.modifiedWinsRight) {
-    Q_EMIT downloadRequested(path);
+  for (const auto &entry : negotiationState.diffEntries.modifiedWinsRight) {
+    Q_EMIT downloadRequested(entry.path);
   }
 
   for (const auto &[path, deletedAt] :

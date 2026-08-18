@@ -30,10 +30,10 @@ inline std::shared_ptr<MerkleProtocolMessage> toProtocolMessage(MerkleSyncMessag
   return m;
 }
 
-inline QDebug operator<<(QDebug debug, const DeletionEntry &entry)
+inline QDebug operator<<(QDebug debug, const TimedFileEntry &entry)
 {
     QDebugStateSaver saver(debug);
     debug.nospace() << "DeletionEntry(path=" << entry.path
-                    << ", deletedAt=" << entry.deletedAt << ")";
+                    << ", deletedAt=" << entry.mtime << ")";
     return debug;
 }

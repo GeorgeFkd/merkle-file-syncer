@@ -67,12 +67,12 @@ void buildDbsFromSpec(const QList<FileSpec> &specs, FSMetadata &clientDb,
     case FileFate::DifferentContentClientNewer:
       clientDb.recordFile(kUser, spec.path, recent, hashOf(spec.path + "c"));
       serverDb.recordFile(kUser, spec.path, old, hashOf(spec.path + "s"));
-      expected.modifiedWinsLeft.append(spec.path);
+      expected.modifiedWinsLeft.append({spec.path,recent});
       break;
     case FileFate::DifferentContentServerNewer:
       clientDb.recordFile(kUser, spec.path, old, hashOf(spec.path + "c"));
       serverDb.recordFile(kUser, spec.path, recent, hashOf(spec.path + "s"));
-      expected.modifiedWinsRight.append(spec.path);
+      expected.modifiedWinsRight.append({spec.path,recent});
       break;
     case FileFate::DeletedOnClient:
       clientDb.recordFile(kUser, spec.path, old, hashOf(spec.path));
@@ -171,7 +171,7 @@ QSet<QString> pathsOf(const QList<QPair<bool, QString>> &list) {
     out.insert(p);
   return out;
 }
-QSet<QString> pathsOf(const QList<DeletionEntry> &list) {
+QSet<QString> pathsOf(const QList<TimedFileEntry> &list) {
   QSet<QString> out;
   for (const auto &e : list)
     out.insert(e.path);
@@ -236,33 +236,33 @@ RC_GTEST_TYPED_FIXTURE_PROP(SyncProtocolTest, negotiationMatchesExpectedDiff,
              << " path: " << s.path.toStdString() << "\n";
   }
 
-  auto actualModifiedWinsLeft =
-      QSet(actual.modifiedWinsLeft.begin(), actual.modifiedWinsLeft.end());
-  auto actualModifiedWinsRight =
-      QSet(actual.modifiedWinsRight.begin(), actual.modifiedWinsRight.end());
+  // auto actualModifiedWinsLeft =
+  //     QSet(actual.modifiedWinsLeft.begin(), actual.modifiedWinsLeft.end());
+  // auto actualModifiedWinsRight =
+  //     QSet(actual.modifiedWinsRight.begin(), actual.modifiedWinsRight.end());
+  //
+  // auto expectedModifiedWinsLeft =
+  //     QSet(expected.modifiedWinsLeft.begin(), expected.modifiedWinsLeft.end());
+  // auto expectedModifiedWinsRight = QSet(expected.modifiedWinsRight.begin(),
+  //                                       expected.modifiedWinsRight.end());
 
-  auto expectedModifiedWinsLeft =
-      QSet(expected.modifiedWinsLeft.begin(), expected.modifiedWinsLeft.end());
-  auto expectedModifiedWinsRight = QSet(expected.modifiedWinsRight.begin(),
-                                        expected.modifiedWinsRight.end());
-
-  RC_LOG() << "actual onlyInLeft:   "
-           << pathsOf(actual.onlyInLeft).values().join(",").toStdString();
-  RC_LOG() << " expected onlyInLeft: "
-           << pathsOf(expected.onlyInLeft).values().join(",").toStdString();
-  RC_LOG() << "actual modifiedWinsLeft:   "
-           << actualModifiedWinsLeft.values().join(",").toStdString();
-  RC_LOG() << "expected modifiedWinsLeft:  "
-           << expectedModifiedWinsLeft.values().join(",").toStdString();
-  RC_LOG() << "actual modifiedWinsRight: "
-           << actualModifiedWinsRight.values().join(",").toStdString();
-  RC_LOG() << " expected modifiedWinsRight: "
-           << expectedModifiedWinsRight.values().join(",").toStdString();
+  // RC_LOG() << "actual onlyInLeft:   "
+  //          << pathsOf(actual.onlyInLeft).values().join(",").toStdString();
+  // RC_LOG() << " expected onlyInLeft: "
+  //          << pathsOf(expected.onlyInLeft).values().join(",").toStdString();
+  // RC_LOG() << "actual modifiedWinsLeft:   "
+  //          << actualModifiedWinsLeft.values().join(",").toStdString();
+  // RC_LOG() << "expected modifiedWinsLeft:  "
+  //          << expectedModifiedWinsLeft.values().join(",").toStdString();
+  // RC_LOG() << "actual modifiedWinsRight: "
+  //          << actualModifiedWinsRight.values().join(",").toStdString();
+  // RC_LOG() << " expected modifiedWinsRight: "
+  //          << expectedModifiedWinsRight.values().join(",").toStdString();
 
   RC_ASSERT(pathsOf(actual.onlyInLeft) == pathsOf(expected.onlyInLeft));
   RC_ASSERT(pathsOf(actual.onlyInRight) == pathsOf(expected.onlyInRight));
-  RC_ASSERT(actualModifiedWinsLeft == expectedModifiedWinsLeft);
-  RC_ASSERT(actualModifiedWinsRight == expectedModifiedWinsRight);
+  RC_ASSERT(pathsOf(actual.modifiedWinsLeft) == pathsOf(expected.modifiedWinsLeft));
+  RC_ASSERT(pathsOf(actual.modifiedWinsRight) == pathsOf(expected.modifiedWinsRight));
   RC_ASSERT(pathsOf(actual.deletionWinsLeft) ==
             pathsOf(expected.deletionWinsLeft));
   RC_ASSERT(pathsOf(actual.deletionWinsRight) ==

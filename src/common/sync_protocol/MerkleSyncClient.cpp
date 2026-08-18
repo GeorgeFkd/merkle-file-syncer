@@ -99,12 +99,12 @@ void MerkleSyncClient::onMessage(std::shared_ptr<MerkleProtocolMessage> msg,
         break;
       case DiffBucket::ModifiedWinsLeft:
         // negotiationState.diffEntries.modified.append(path);
-        negotiationState.diffEntries.modifiedWinsLeft.append(path);
+        negotiationState.diffEntries.modifiedWinsLeft.append({path,left.mtime.value()});
         break;
       case DiffBucket::ModifiedWinsRight:
         // TODO: split into directional buckets once the applier consumes them.
         // negotiationState.diffEntries.modified.append(path);
-        negotiationState.diffEntries.modifiedWinsRight.append(path);
+        negotiationState.diffEntries.modifiedWinsRight.append({path,right.mtime.value()});
         break;
       case DiffBucket::DeletionWinsLeft:
         negotiationState.diffEntries.deletionWinsLeft.append(
