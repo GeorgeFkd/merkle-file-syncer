@@ -142,4 +142,9 @@ target_include_directories(networking_tests PRIVATE ${TEST_COMMON_INCLUDES}
   ${CMAKE_SOURCE_DIR}/src/common/networking
   ${CMAKE_SOURCE_DIR}/src/common/communication)
 set_target_properties(networking_tests PROPERTIES AUTOMOC ON)
-gtest_discover_tests(networking_tests)
+gtest_discover_tests(networking_tests 
+PROPERTIES
+    LABELS "networking" 
+    ENVIRONMENT "TLS_CERT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/server_cert.pem"
+    ENVIRONMENT "TLS_KEY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/server_key.pem"
+    ENVIRONMENT "TLS_CA_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca_cert.pem")

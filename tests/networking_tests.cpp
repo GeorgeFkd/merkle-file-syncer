@@ -4,6 +4,9 @@
 #include "LocalServerTransport.h"
 #include "TcpClientTransport.h"
 #include "TcpServerTransport.h"
+#include "TlsClientTransport.h"
+#include "TlsServerTransport.h"
+
 #include "Messages.h"
 
 #include <gtest/gtest.h>
@@ -52,6 +55,17 @@ struct TcpTag {
   static QString endpoint() { return "127.0.0.1:0"; }
 };
 
+struct TlsTag {
+  static std::unique_ptr<ServerTransport> makeServer() {
+    return std::make_unique<TlsServerTransport>();
+  }
+  static std::unique_ptr<ClientTransport> makeClient() {
+    return std::make_unique<TlsClientTransport>();
+  }
+  // port 0 => OS picks a free port; SAN in the test cert covers 127.0.0.1
+  static QString endpoint() { return "127.0.0.1:0"; }
+};
+
 template <typename Tag>
 class TransportTest : public ::testing::Test {
 protected:
@@ -86,7 +100,7 @@ protected:
   }
 };
 
-using Tags = ::testing::Types<LocalTag, TcpTag>;
+using Tags = ::testing::Types<LocalTag, TcpTag,TlsTag>;
 TYPED_TEST_SUITE(TransportTest, Tags);
 
 // ---- lifecycle ----
