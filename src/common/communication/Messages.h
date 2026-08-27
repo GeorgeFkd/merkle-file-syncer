@@ -25,6 +25,12 @@ enum class MessageType {
   SpecifyChunkSizeUpload,
   SpecifyChunkSizeDownload,
   CancelTransfer,
+  Register,
+  Logout,
+  DeleteAccount,
+  RegisterResponse,
+  LogoutResponse,
+  DeleteAccountResponse
 };
 
 class Message {
@@ -284,6 +290,64 @@ public:
   QByteArray serialize() const override;
   static std::unique_ptr<CancelTransfer> deserialize(const QJsonObject &obj);
 };
+
+
+class RegisterMessage : public Message {
+public:
+  QString username;
+  QString password;
+  QString deviceName;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<RegisterMessage> deserialize(const QJsonObject &obj);
+};
+
+class RegisterResponseMessage : public Message {
+public:
+  bool success = false;
+  QString error;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<RegisterResponseMessage> deserialize(const QJsonObject &obj);
+};
+
+class LogoutMessage : public Message {
+public:
+  // token lives in base Message
+  QString deviceName; // logout a specific device
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<LogoutMessage> deserialize(const QJsonObject &obj);
+};
+
+class LogoutResponseMessage : public Message {
+public:
+  bool success = false;
+  QString error;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<LogoutResponseMessage> deserialize(const QJsonObject &obj);
+};
+
+class DeleteAccountMessage : public Message {
+public:
+  QString password; // re-auth confirmation
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<DeleteAccountMessage> deserialize(const QJsonObject &obj);
+};
+
+class DeleteAccountResponseMessage : public Message {
+public:
+  bool success = false;
+  QString error;
+  MessageType type() const override;
+  QByteArray serialize() const override;
+  static std::unique_ptr<DeleteAccountResponseMessage> deserialize(const QJsonObject &obj);
+};
+
+
+
 
 QDebug operator<<(QDebug dbg, const DeleteRequestMessage &msg);
 QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack);

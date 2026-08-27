@@ -167,6 +167,18 @@ std::unique_ptr<Message> Message::deserialize(const QByteArray &data) {
     return SpecifyChunkSizeDownload::deserialize(obj);
   if (type == "cancel_transfer")
     return CancelTransfer::deserialize(obj);
+  if (type == "register")
+    return RegisterMessage::deserialize(obj);
+  if (type == "register_response")
+    return RegisterResponseMessage::deserialize(obj);
+  if (type == "logout")
+    return LogoutMessage::deserialize(obj);
+  if (type == "logout_response")
+    return LogoutResponseMessage::deserialize(obj);
+  if (type == "delete_account")
+    return DeleteAccountMessage::deserialize(obj);
+  if (type == "delete_account_response")
+    return DeleteAccountResponseMessage::deserialize(obj);
   qDebug() << "Type of message actually is: " << type;
   return nullptr;
 }
@@ -547,6 +559,123 @@ CancelTransfer::deserialize(const QJsonObject &obj) {
   msg->token = obj["token"].toString();
   msg->path = obj["path"].toString();
   return msg;
+}
+
+// --- Register ---
+MessageType RegisterMessage::type() const { return MessageType::Register; }
+QByteArray RegisterMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "register";
+  o["token"] = token;
+  o["username"] = username;
+  o["password"] = password;
+  o["deviceName"] = deviceName;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<RegisterMessage>
+RegisterMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<RegisterMessage>();
+  m->token = obj["token"].toString();
+  m->username = obj["username"].toString();
+  m->password = obj["password"].toString();
+  m->deviceName = obj["deviceName"].toString();
+  return m;
+}
+
+MessageType RegisterResponseMessage::type() const {
+  return MessageType::RegisterResponse;
+}
+QByteArray RegisterResponseMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "register_response";
+  o["token"] = token;
+  o["success"] = success;
+  o["error"] = error;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<RegisterResponseMessage>
+RegisterResponseMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<RegisterResponseMessage>();
+  m->token = obj["token"].toString();
+  m->success = obj["success"].toBool();
+  m->error = obj["error"].toString();
+  return m;
+}
+
+// --- Logout ---
+MessageType LogoutMessage::type() const { return MessageType::Logout; }
+QByteArray LogoutMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "logout";
+  o["token"] = token;
+  o["deviceName"] = deviceName;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<LogoutMessage>
+LogoutMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<LogoutMessage>();
+  m->token = obj["token"].toString();
+  m->deviceName = obj["deviceName"].toString();
+  return m;
+}
+
+MessageType LogoutResponseMessage::type() const {
+  return MessageType::LogoutResponse;
+}
+QByteArray LogoutResponseMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "logout_response"; 
+  o["token"] = token;
+  o["success"] = success;
+  o["error"] = error;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<LogoutResponseMessage>
+LogoutResponseMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<LogoutResponseMessage>();
+  m->token = obj["token"].toString();
+  m->success = obj["success"].toBool();
+  m->error = obj["error"].toString();
+  return m;
+}
+
+// --- DeleteAccount ---
+MessageType DeleteAccountMessage::type() const {
+  return MessageType::DeleteAccount;
+}
+QByteArray DeleteAccountMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "delete_account";
+  o["token"] = token;
+  o["password"] = password;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<DeleteAccountMessage>
+DeleteAccountMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<DeleteAccountMessage>();
+  m->token = obj["token"].toString();
+  m->password = obj["password"].toString();
+  return m;
+}
+
+MessageType DeleteAccountResponseMessage::type() const {
+  return MessageType::DeleteAccountResponse;
+}
+QByteArray DeleteAccountResponseMessage::serialize() const {
+  QJsonObject o;
+  o["type"] = "delete_account_response";
+  o["token"] = token;
+  o["success"] = success;
+  o["error"] = error;
+  return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+std::unique_ptr<DeleteAccountResponseMessage>
+DeleteAccountResponseMessage::deserialize(const QJsonObject &obj) {
+  auto m = std::make_unique<DeleteAccountResponseMessage>();
+  m->token = obj["token"].toString();
+  m->success = obj["success"].toBool();
+  m->error = obj["error"].toString();
+  return m;
 }
 
 QDebug operator<<(QDebug dbg, const ACKChunkReceived &ack) {

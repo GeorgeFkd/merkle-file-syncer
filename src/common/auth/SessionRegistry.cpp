@@ -50,6 +50,16 @@ std::optional<QString> SessionRegistry::getUsername(const QString &token) const 
   return it.value().username;
 }
 
+void SessionRegistry::revokeAllForUser(const QString &username) {
+  for (auto it = sessions.begin(); it != sessions.end();) {
+    if (it->username == username)
+      it = sessions.erase(it);
+    else
+      ++it;
+  }
+}
+
+
 std::optional<QString> SessionRegistry::getDeviceName(const QString &token) const {
   auto it = sessions.constFind(token);
   if (it == sessions.constEnd())

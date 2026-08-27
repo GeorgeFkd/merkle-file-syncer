@@ -148,3 +148,24 @@ PROPERTIES
     ENVIRONMENT "TLS_CERT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/server_cert.pem"
     ENVIRONMENT "TLS_KEY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/server_key.pem"
     ENVIRONMENT "TLS_CA_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca_cert.pem")
+
+
+add_executable(auth_tests main.cpp auth_tests.cpp)
+target_compile_definitions(auth_tests PRIVATE AUTH_TESTING)
+target_link_libraries(auth_tests PRIVATE
+  GTest::gtest
+  rapidcheck
+  auth_client
+  auth_server
+  messages
+  Qt6::Core
+)
+target_include_directories(auth_tests PRIVATE
+  ${TEST_COMMON_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/src/common/auth
+)
+set_target_properties(auth_tests PROPERTIES AUTOMOC ON)
+gtest_discover_tests(auth_tests)
+
+
+

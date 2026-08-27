@@ -14,6 +14,7 @@ struct Session {
 
 class SessionRegistry {
 public:
+  void revokeAllForUser(const QString &username);
   QString createSession(const QString &username, const QString &deviceName);
   std::optional<Session> getSession(const QString &token) const;
   std::optional<QString> getUsername(const QString &token) const;
