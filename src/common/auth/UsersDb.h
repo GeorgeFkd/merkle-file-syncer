@@ -9,7 +9,8 @@ public:
   //should not be used by proper implementations, it 
   [[deprecated("Should not be used in actual implementations, use instead verifyUserCredentials")]]
   bool userExists(const QString& user, const QString& password) const;
-
+  
+  bool userExists(const QString& user) const;
   bool verifyUserCredentials(const QString& user, const QString& password) const;
   void deleteUser(const QString &user);
 

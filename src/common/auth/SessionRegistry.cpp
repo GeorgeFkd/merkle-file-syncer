@@ -2,6 +2,12 @@
 
 #include <QUuid>
 
+
+bool SessionRegistry::isActive(const QString &token) const {
+  return sessions.contains(token);
+}
+
+
 QString SessionRegistry::createSession(const QString &username,
                                        const QString &deviceName) {
     QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);

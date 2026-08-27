@@ -22,6 +22,7 @@ public:
   void revokeSession(const QString &token);
   bool hasSession(const QString &username, const QString &deviceName) const;
   void touchSession(const QString &token);
+  bool isActive(const QString &token) const;
 
 private:
   QHash<QString, Session> sessions;

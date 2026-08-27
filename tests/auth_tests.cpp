@@ -4,6 +4,11 @@
 #include "SessionRegistry.h"
 #include "UsersDb.h"
 #include <gtest/gtest.h>
+#include <QTemporaryDir>
+#include <QProcess>
+#include <jwt-cpp/jwt.h>
+#include <jwt-cpp/traits/kazuho-picojson/traits.h>
+
 
 // Wires one client to the server under a connection id, and captures the
 // client's result signals. Heap-allocated only (holds a QObject, captures
@@ -56,10 +61,27 @@ protected:
   UsersDb users;
   std::unique_ptr<AuthServer> server;
 
+  static inline QTemporaryDir *keyDir = nullptr;
+
+  static void SetUpTestSuite() {
+    keyDir = new QTemporaryDir();
+    QString priv = keyDir->filePath("priv.pem");
+    QString pub = keyDir->filePath("pub.pem");
+    QProcess::execute("openssl", {"genpkey", "-algorithm", "RSA", "-pkeyopt",
+                                  "rsa_keygen_bits:2048", "-out", priv});
+    QProcess::execute("openssl",
+                      {"rsa", "-pubout", "-in", priv, "-out", pub});
+    qputenv("JWT_PRIVATE_KEY_PATH", priv.toLocal8Bit());
+    qputenv("JWT_PUBLIC_KEY_PATH", pub.toLocal8Bit());
+  }
+  static void TearDownTestSuite() {
+    delete keyDir;
+    keyDir = nullptr;
+  }
+
   void SetUp() override {
     server = std::make_unique<AuthServer>(&sessions, &users);
   }
-
   std::unique_ptr<TestClient> makeClient(const QString &conn) {
     return std::make_unique<TestClient>(server.get(), conn);
   }
@@ -96,8 +118,11 @@ TEST_F(AuthTest, ClientTokenMatchesServerSession) {
   auto c = makeClient("conn1");
   c->client.registerAccount("alice", "pw", "dev1");
   c->client.login("alice", "pw", "dev1");
+  auto decoded = jwt::decode<jwt::traits::kazuho_picojson>(c->client.getToken().toStdString());
+  QString jti = QString::fromStdString(decoded.get_id());
 
-  auto session = sessions.getSession(c->client.getToken());
+  auto session = sessions.getSession(jti);
+
   ASSERT_TRUE(session.has_value());
   EXPECT_EQ(session->username, "alice");
 }

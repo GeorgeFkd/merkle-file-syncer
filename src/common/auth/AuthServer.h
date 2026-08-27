@@ -1,5 +1,6 @@
 #pragma once
 #include "Messages.h"
+#include "KeyProvider.h"
 #include "SessionRegistry.h"
 #include "UsersDb.h"
 #include <QObject>
@@ -44,7 +45,9 @@ private:
   // Stubbed this pass — signal/method present, body deferred.
   void handleDeleteAccount(DeleteAccountMessage *msg,
                            const AuthServerInMsgCtx &ctx);
+  std::optional<QString> validate(const QString &token) const;
 
   SessionRegistry *sessions; // not owned
-  UsersDb *users;         // not owned
+  UsersDb *users;            // not owned
+  SigningKeys keys;
 };
