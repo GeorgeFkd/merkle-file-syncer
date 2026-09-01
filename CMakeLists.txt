@@ -14,6 +14,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core Network Sql)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 qt_standard_project_setup()
 
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+include(libsodium)
+
 add_subdirectory(src/common)
 add_subdirectory(src/server)
 add_subdirectory(src/client)
