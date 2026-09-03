@@ -15,7 +15,7 @@ target_include_directories(
          ${CMAKE_SOURCE_DIR}/src/common/networking
          )
 target_link_libraries(
-  merkle_client_lib PRIVATE messages hashing fs_metadata filesutil storage users_db Qt6::Core merkle_protocol_client naive_protocol_client PUBLIC file_transfer_client
+  merkle_client_lib PRIVATE messages hashing fs_metadata filesutil storage Qt6::Core merkle_protocol_client naive_protocol_client PUBLIC auth_client PUBLIC file_transfer_client
                              Qt6::Network network_client)
 qt_add_executable(merkle_client main.cpp)
 

@@ -1,4 +1,5 @@
 #pragma once
+#include "AuthServer.h"
 #include "FSMetadata.h"
 #include "FileStorage.h"
 #include "FileTransferServer.h"
@@ -16,6 +17,10 @@ struct FileServerConfig {
   TransportProtocol protocol;
   QString serverName;
   std::unique_ptr<FileStorage> storage;
+  // Optional: hand in a pre-populated account store (tests seed it so clients
+  // can log in without a registration round trip). Empty means a fresh, empty
+  // UsersDb, i.e. nobody can log in until they register.
+  std::unique_ptr<UsersDb> users;
 };
 
 class FileServer : public QObject {
@@ -34,7 +39,7 @@ public:
                  const QByteArray &contents, const QDateTime &mtime);
 
 Q_SIGNALS:
-  void sendMessage(std::shared_ptr<Message> msg);
+  void sendMessage(std::shared_ptr<Message> msg, ConnectionId conn);
 
 private:
   // --- Server lifecycle / connections ---
@@ -43,40 +48,47 @@ private:
   QString serverUrl;
   void setupConnections();
   void setupSocketConnections();
+  void setupAuthConnections();
 
   void setupNegotiationConnections();
   void setupFileTransferConnections();
   void onSocketDisconnected(QIODevice *socket);
   void onSocketReadyRead(QIODevice *socket);
-  void onNewConnection();
+  void onNewConnection(QIODevice *socket);
   void dispatch(QIODevice *socket, std::shared_ptr<Message> msg);
   void setupNewSocketConnection(QLocalSocket *socket);
 
-  void sendToClient(const QString& token, std::shared_ptr<Message> msg);
+  void sendToClient(const ConnectionId &conn, std::shared_ptr<Message> msg);
 
   static QString transferMetadataKey(const ClientId &conn, const QString &path) {
     return conn + "|" + path;
   }
-  ConnectionId connIdFor(QIODevice *socket) const {
-    return socketToTokenMap.value(socket);
-  }
   QHash<QString, QPair<QByteArray, QDateTime>> pendingTransfersMetadata;
 
   // --- Auth / sessions ---
+  // Connection identity is minted per socket and is independent of auth: it
+  // exists before a client has logged in (register and failed-login replies
+  // need somewhere to go) and it is what every subsystem downstream is keyed
+  // on. The token never leaves this file — connToSession holds the session a
+  // connection has proven it owns.
   SessionRegistry sessionStore;
-  QHash<QIODevice *, QString> socketToTokenMap;
-  QIODevice *getSocketFromToken(const QString &token);
-  std::shared_ptr<AuthResponseMessage>
-  handleAuth(std::shared_ptr<AuthMessage> msg);
-  bool verifyUserCredentials(const QString &username, const QString &password);
-  std::optional<Session> resolveSession(const QString &token);
-  std::optional<QString> getUsernameFromToken(const QString &token);
-  QString getUserFrom(Message *msg);
+  std::unique_ptr<UsersDb> usersDb;
+  std::unique_ptr<AuthServer> authServer;
+  QHash<QIODevice *, ConnectionId> socketToConn;
+  QHash<ConnectionId, QString> connToSession;
+
+  void bindSession(ConnectionId conn, QString sessionId, QString username);
+  void unbindSession(const ConnectionId &conn);
+  // Returns the session id this connection owns, but only if the token the
+  // message actually carried resolves to that same session. A globally valid
+  // token presented on someone else's connection is refused.
+  std::optional<QString> authorize(const ConnectionId &conn,
+                                   const QString &token);
+  std::optional<QString> usernameFor(const ConnectionId &conn) const;
 
   // --- Storage / DB / per-user merkle trees ---
   std::unique_ptr<FileStorage> fileStorage;
   FSMetadata database;
-  UsersDb usersDb;
   struct QStringHash {
     size_t operator()(const QString &s) const { return qHash(s); }
   };
@@ -91,17 +103,21 @@ private:
 
   // --- Sync request handling ---
   std::shared_ptr<DeleteRequestMessage>
-  handleDeleteRequest(std::shared_ptr<DeleteRequestMessage> msg);
+  handleDeleteRequest(std::shared_ptr<DeleteRequestMessage> msg,
+                      const ConnectionId &conn);
   std::unique_ptr<FileTransferServer> fileTransferServer;
   void fillDownloadMetadata(SpecifyChunkSizeDownload*,const QString& user);
-  void storeUploadMetadata(RequestChunkSizeForUpload *);
+  void storeUploadMetadata(RequestChunkSizeForUpload *,
+                           const ConnectionId &conn);
 
   // --- Listing ---
-  void handleListRequest(std::shared_ptr<ListRequestMessage> msg);
+  void handleListRequest(std::shared_ptr<ListRequestMessage> msg,
+                         const ConnectionId &conn);
   NaiveSyncServer naiveSyncServer;
 
   // --- Merkle negotiation ---
-  void handleMerkleSyncRequest(std::shared_ptr<MerkleSyncMessage> msg);
+  void handleMerkleSyncRequest(std::shared_ptr<MerkleSyncMessage> msg,
+                               const ConnectionId &conn);
   MerkleSyncServer merkleSyncServer;
 
   // --- Misc ---

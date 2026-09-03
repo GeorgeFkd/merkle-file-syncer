@@ -14,6 +14,25 @@
 #include <gtest/gtest.h>
 #include <rapidcheck/gtest.h>
 
+// The account every fixture logs in as. The server is handed a UsersDb with it
+// already stored, so clients authenticate without a registration round trip.
+// UsersDb keeps only the Argon2id digest and cannot hand a password back, so
+// the credentials live here rather than being read out of the db. Device names
+// are a per-client choice and stay with the fixtures.
+// The RS256 keypair AuthServer signs with comes from certs/jwt_*.pem, passed in
+// as JWT_PRIVATE_KEY_PATH / JWT_PUBLIC_KEY_PATH by gtest_discover_tests — so
+// these tests must be run through ctest, not by invoking the binary directly.
+namespace {
+constexpr auto kUsername = "foo";
+constexpr auto kPassword = "bar";
+
+std::unique_ptr<UsersDb> seededUsersDb() {
+  auto users = std::make_unique<UsersDb>();
+  users->storeUser(kUsername, kPassword, kUsername);
+  return users;
+}
+} // namespace
+
 struct LocalStorageTag {
   static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
     auto s = std::make_unique<LocalFileStorage>();
@@ -119,7 +138,8 @@ protected:
     fileServer.configure(FileServerConfig{
         .protocol = Tag::protocol,
         .serverName = endpoint,
-        .storage = Tag::Storage::makeStorage(serverDir->path())});
+        .storage = Tag::Storage::makeStorage(serverDir->path()),
+        .users = seededUsersDb()});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
     qDebug() << "Server serverName after start:" << fileServer.serverName();
@@ -128,8 +148,8 @@ protected:
     client = std::make_unique<FileClient>();
     client->configure(FileClientConfig{.protocol = Tag::protocol,
                                        .rootDir = clientDir->path(),
-                                       .username = username,
-                                       .password = "bar",
+                                       .username = kUsername,
+                                       .password = kPassword,
                                        .syncStrategy = Tag::strategy,
                                        .manualTick = true,
                                        .serverName = clientEndpoint,
@@ -178,7 +198,7 @@ protected:
   QDir *clientDir = nullptr;
   QDir *serverDir = nullptr;
   FileServer fileServer;
-  QString username = "foo";
+  QString username = kUsername;
   QString deviceName = "client1";
 };
 
@@ -313,7 +333,8 @@ protected:
     fileServer.configure(FileServerConfig{
         .protocol = Tag::protocol,
         .serverName = endpoint,
-        .storage = Tag::Storage::makeStorage(serverDir.path())});
+        .storage = Tag::Storage::makeStorage(serverDir.path()),
+        .users = seededUsersDb()});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
 
@@ -354,8 +375,8 @@ protected:
     client->configure(FileClientConfig{
         .protocol = Tag::protocol,
         .rootDir = dirPath,
-        .username = username,
-        .password = "bar",
+        .username = kUsername,
+        .password = kPassword,
         .syncStrategy = Tag::strategy,
         .manualTick = true,
         .serverName = endpoint,
@@ -387,7 +408,7 @@ protected:
   QString endpoint;
   QDir serverDir;
   QList<QString> clientDirs;
-  QString username = "foo";
+  QString username = kUsername;
   FileServer fileServer;
   std::unique_ptr<FileClient> deviceA;
   std::unique_ptr<FileClient> deviceB;
@@ -543,4 +564,119 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
       this->deviceA->getStorage()->readFile(this->username, "test.txt");
   ASSERT_TRUE(aContents.has_value());
   ASSERT_EQ(aContents.value(), QByteArray("B's newer version"));
+}
+
+// --- Auth integration -------------------------------------------------------
+// The server now refuses every non-auth message from a connection that has not
+// proven a session, so a client that cannot log in must not be able to sync.
+class ServerAuthTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    serverDir =
+        QDir(QCoreApplication::applicationDirPath() + "/test_auth_server/" +
+             runId);
+    clientDir =
+        QDir(QCoreApplication::applicationDirPath() + "/test_auth_client/" +
+             runId);
+    QDir().mkpath(serverDir.path());
+    QDir().mkpath(clientDir.path());
+
+    fileServer.configure(FileServerConfig{
+        .protocol = TransportProtocol::LocalSocket,
+        .serverName = "auth_sync_test_" + runId,
+        .storage = LocalStorageTag::makeStorage(serverDir.path()),
+        .users = seededUsersDb()});
+    fileServer.getStorage()->cleanup(kUsername);
+    fileServer.start();
+  }
+
+  void TearDown() override {
+    QDir(clientDir.path()).removeRecursively();
+    fileServer.getStorage()->cleanup(kUsername);
+  }
+
+  std::unique_ptr<FileClient> makeClient(const QString &password,
+                                         const QString &deviceName) {
+    auto client = std::make_unique<FileClient>();
+    client->configure(FileClientConfig{.protocol = TransportProtocol::LocalSocket,
+                                       .rootDir = clientDir.path(),
+                                       .username = kUsername,
+                                       .password = password,
+                                       .syncStrategy = SyncStrategy::Merkle,
+                                       .manualTick = true,
+                                       .serverName = fileServer.serverName(),
+                                       .deviceName = deviceName});
+    client->start();
+    return client;
+  }
+
+  void settle(int ms = 300) {
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+  }
+
+  QString runId;
+  QDir serverDir;
+  QDir clientDir;
+  FileServer fileServer;
+};
+
+TEST_F(ServerAuthTest, seededAccountAuthenticates) {
+  auto client = makeClient(kPassword, "device-a");
+  bool authenticated = false;
+  QObject::connect(client.get(), &FileClient::authenticated,
+                   [&]() { authenticated = true; });
+  settle();
+  EXPECT_TRUE(authenticated);
+}
+
+TEST_F(ServerAuthTest, wrongPasswordNeverSyncs) {
+  auto client = makeClient("not-the-password", "device-a");
+  bool authenticated = false;
+  QObject::connect(client.get(), &FileClient::authenticated,
+                   [&]() { authenticated = true; });
+  settle();
+  ASSERT_FALSE(authenticated);
+
+  client->writeFile(kUsername, "secret.txt", "should never leave");
+  client->clientTick();
+  settle();
+
+  EXPECT_TRUE(fileServer.getStorage()->listFiles(kUsername).isEmpty());
+}
+
+TEST_F(ServerAuthTest, unknownUserIsRejected) {
+  auto client = std::make_unique<FileClient>();
+  client->configure(FileClientConfig{.protocol = TransportProtocol::LocalSocket,
+                                     .rootDir = clientDir.path(),
+                                     .username = "ghost",
+                                     .password = "pw",
+                                     .syncStrategy = SyncStrategy::Merkle,
+                                     .manualTick = true,
+                                     .serverName = fileServer.serverName(),
+                                     .deviceName = "device-a"});
+  client->start();
+  bool authenticated = false;
+  QObject::connect(client.get(), &FileClient::authenticated,
+                   [&]() { authenticated = true; });
+  settle();
+  EXPECT_FALSE(authenticated);
+}
+
+TEST_F(ServerAuthTest, sameDeviceCannotHoldTwoSessions) {
+  auto first = makeClient(kPassword, "device-a");
+  bool firstAuthed = false;
+  QObject::connect(first.get(), &FileClient::authenticated,
+                   [&]() { firstAuthed = true; });
+  settle();
+  ASSERT_TRUE(firstAuthed);
+
+  auto second = makeClient(kPassword, "device-a");
+  bool secondAuthed = false;
+  QObject::connect(second.get(), &FileClient::authenticated,
+                   [&]() { secondAuthed = true; });
+  settle();
+  EXPECT_FALSE(secondAuthed);
 }

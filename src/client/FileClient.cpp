@@ -25,7 +25,6 @@ void FileClient::configure(const FileClientConfig &config) {
   fileStorage->setRoot(QDir(config.rootDir).absolutePath());
   serverName = config.serverName;
   tickIntervalMs = config.tickIntervalMs;
-  usersDb.storeUser(username, password, fileStorage->rootPath(username));
   deviceName = config.deviceName;
 
   switch (config.protocol) {
@@ -54,6 +53,7 @@ void FileClient::start() {
 void FileClient::setupConnections() {
 
   setupSocketConnections();
+  setupAuthConnections();
 
   QObject::connect(this, &FileClient::authenticated, this,
                    &FileClient::onAuthenticated);
@@ -71,20 +71,49 @@ void FileClient::onDownloadCompleted(QString path) {
   transferDone();
 }
 
+void FileClient::sendMessageToServer(std::shared_ptr<Message> msg) {
+  authClient.stampToken(msg);
+  transport->send(msg);
+}
+
+void FileClient::setupAuthConnections() {
+  // AuthClient has already stamped its own token where it applies, so its
+  // messages go straight out rather than through sendMessageToServer.
+  QObject::connect(
+      &authClient, &AuthClient::sendMessage, this,
+      [this](std::shared_ptr<Message> msg) { transport->send(msg); });
+  // AuthClient self-filters, so it can take the whole inbound stream.
+  QObject::connect(transport.get(), &ClientTransport::messageReady, &authClient,
+                   &AuthClient::onMessage);
+
+  QObject::connect(&authClient, &AuthClient::authenticated, this,
+                   [this](const QString &) {
+                     qDebug() << "Auth successful";
+                     state = ClientState::Authenticated;
+                     Q_EMIT authenticated();
+                   });
+  QObject::connect(&authClient, &AuthClient::authFailed, this,
+                   [this](const QString &error) {
+                     qWarning() << "Auth failed:" << error;
+                     state = ClientState::Disconnected;
+                     pendingTick = false;
+                   });
+  QObject::connect(&authClient, &AuthClient::loggedOut, this,
+                   [this]() { state = ClientState::Connected; });
+}
+
 void FileClient::setupNegotiationConnections() {
   QObject::connect(&merkleSyncClient, &MerkleSyncClient::messageSendRequest,
                    this,
                    [this](std::shared_ptr<MerkleProtocolMessage> protoMsg) {
                      auto msg = toWireMessage(protoMsg.get());
-                     msg->token = token;
-                     transport->send(msg);
+                     sendMessageToServer(msg);
                    });
   QObject::connect(&naiveSyncClient, &NaiveSyncClient::sendMessage, this,
                    [this](std::shared_ptr<ListRequestMessage> msg) {
                      awaitingListResponse = true;
-                     msg->token = token;
                      msg->useMerkle = false;
-                     transport->send(msg);
+                     sendMessageToServer(msg);
                    });
 
   QObject::connect(&naiveSyncClient, &NaiveSyncClient::negotiationCompleted,
@@ -106,7 +135,6 @@ void FileClient::setupFileTransferConnections() {
   QObject::connect(
       fileTransferClient.get(), &FileTransferClient::sendMessage, this,
       [this](std::shared_ptr<Message> msg) {
-        msg->token = token;
         if (msg->type() == MessageType::RequestChunkSizeUpload) {
           auto spec = std::static_pointer_cast<RequestChunkSizeForUpload>(msg);
           auto mtime = database.readMtime(username, spec->path);
@@ -124,7 +152,7 @@ void FileClient::setupFileTransferConnections() {
           }
           qDebug() << "Hash is: " << hash;
         }
-        transport->send(msg);
+        sendMessageToServer(msg);
       });
 
   // inbound messages -> transfer (it filters by type internally)
@@ -153,13 +181,10 @@ void FileClient::setupSocketConnections() {
 void FileClient::onConnected() {
   qDebug() << "Connected event fired.";
   state = ClientState::Authenticating;
-  sendAuthRequest();
+  authClient.login(username, password, getDeviceName());
 }
 
-void FileClient::onDisconnected() {
-  state = ClientState::Disconnected;
-  token.clear();
-}
+void FileClient::onDisconnected() { state = ClientState::Disconnected; }
 
 void FileClient::onAuthenticated() {
   if (pendingTick) {
@@ -182,10 +207,6 @@ void FileClient::dispatch(std::shared_ptr<Message> msg) {
     return;
   }
   switch (msg->type()) {
-  case MessageType::ServerAuthResponse: {
-    handleAuthResponse(static_cast<AuthResponseMessage *>(msg.get()));
-    break;
-  }
   case MessageType::DeleteRequest: {
     handleDeleteResponse(static_cast<DeleteRequestMessage *>(msg.get()));
     break;
@@ -305,7 +326,7 @@ void FileClient::applyServerVersion(const QString &path,
 void FileClient::flushOutboundCommands() {
   qDebug() << "Flushing sync requests accumulated from client";
   for (auto it = commandsToSend.begin(); it != commandsToSend.end(); ++it) {
-    transport->send(it.value());
+    sendMessageToServer(it.value());
     pendingMessages++;
   }
   commandsToSend.clear();
@@ -496,16 +517,14 @@ void FileClient::stageDirectoryDownload(const QString &dirPath) {
   auto req = std::make_shared<ListRequestMessage>();
   qDebug() << "Directory requested is: " << dirPath;
   req->useMerkle = syncStrategy == SyncStrategy::Merkle;
-  req->token = token;
   req->directory = dirPath;
   pendingDirectoryRequests++;
-  transport->send(req);
+  sendMessageToServer(req);
 }
 
 void FileClient::stageDeleteFor(const QString &path,
                                 const QDateTime &deletedAt) {
   auto msg = std::make_shared<DeleteRequestMessage>();
-  msg->token = token;
   msg->path = path;
   msg->contents = {};
   msg->operationTime = deletedAt;
@@ -551,7 +570,7 @@ void FileClient::handleNegotiationCompleted(
   }
 
   // client's version is newer -> upload it (overwrites the server's stale copy)
-  for (const auto &entry: negotiationState.diffEntries.modifiedWinsLeft) {
+  for (const auto &entry : negotiationState.diffEntries.modifiedWinsLeft) {
     Q_EMIT uploadRequested(entry.path);
   }
 
@@ -593,32 +612,8 @@ void FileClient::applyTombstone(const QString &path, const QDateTime &mtime) {
 
 QString FileClient::getDeviceName() { return deviceName; }
 
-void FileClient::sendAuthRequest() {
-  auto msg = std::make_shared<AuthMessage>();
-  msg->username = username;
-  msg->password = password;
-  msg->deviceName = getDeviceName();
-  transport->send(msg);
-}
-
-void FileClient::handleAuthResponse(AuthResponseMessage *msg) {
-  if (msg->success) {
-    qDebug() << "Auth successful";
-    assert(!msg->token.isEmpty() &&
-           "On auth success the token field should be populated");
-    token = msg->token;
-    qDebug() << "User's token is: " << token;
-    state = ClientState::Authenticated;
-    Q_EMIT authenticated();
-  } else {
-    qDebug() << "Auth failed: " << msg->error;
-    state = ClientState::Disconnected;
-    // if we want explicit disconnect on auth failure should add a
-    // disconnect method to the clienttransport abstraction
-  }
-}
-
 void FileClient::handleUnrecognized(Message *msg) {
   qDebug() << "received message at client that cannot be handled internally, "
-              "should probably send to a different subsystem";
+              "should probably send to a different subsystem if not already "
+              "done so.";
 }

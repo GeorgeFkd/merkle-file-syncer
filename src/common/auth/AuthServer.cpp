@@ -34,7 +34,7 @@ void AuthServer::onMessage(std::shared_ptr<Message> msg,
   }
 }
 
-std::optional<QString> AuthServer::validate(const QString &token) const {
+std::optional<QString> AuthServer::resolveSessionId(const QString &token) const {
   try {
     auto decoded = jwt::decode<traits>(token.toStdString());
     jwt::verify<traits>()
@@ -42,10 +42,10 @@ std::optional<QString> AuthServer::validate(const QString &token) const {
             jwt::algorithm::rs256(keys.publicPem.toStdString(), "", "", ""))
         .with_issuer(kIssuer)
         .verify(decoded); // signature + alg + exp; throws on failure
-    QString jti = QString::fromStdString(decoded.get_id());
-    if (!sessions->isActive(jti)) // allowlist — catches logout/delete
+    QString sessionId = QString::fromStdString(decoded.get_id());
+    if (!sessions->isActive(sessionId)) // allowlist — catches logout/delete
       return std::nullopt;
-    return jti;
+    return sessionId;
   } catch (const std::exception &) {
     return std::nullopt; // contained here — no throw escapes AuthServer
   }
@@ -68,19 +68,33 @@ void AuthServer::handleRegister(RegisterMessage *msg,
 
 void AuthServer::handleLogin(AuthMessage *msg, const AuthServerInMsgCtx &ctx) {
   auto resp = std::make_shared<AuthResponseMessage>();
+  if (msg->username.isEmpty() || msg->deviceName.isEmpty()) {
+    resp->success = false;
+    resp->error = "username and deviceName required";
+    Q_EMIT sendMessage(resp, {ctx.connection});
+    return;
+  }
+  // One live session per (user, device). Carried over from the hand-rolled
+  // auth path in FileServer so integrating this does not silently drop it.
+  if (sessions->hasSession(msg->username, msg->deviceName)) {
+    resp->success = false;
+    resp->error = "device already connected";
+    Q_EMIT sendMessage(resp, {ctx.connection});
+    return;
+  }
   if (!users->verifyUserCredentials(msg->username, msg->password)) {
     resp->success = false;
     resp->error = "invalid credentials";
     Q_EMIT sendMessage(resp, {ctx.connection});
     return;
   }
-  QString jti = sessions->createSession(msg->username, msg->deviceName);
+  QString sessionId = sessions->createSession(msg->username, msg->deviceName);
   auto now = std::chrono::system_clock::now();
   std::string token =
       jwt::create<traits>()
           .set_issuer(kIssuer)
           .set_type("JWT")
-          .set_id(jti.toStdString())
+          .set_id(sessionId.toStdString())
           .set_subject(msg->username.toStdString())
           .set_payload_claim("deviceName",
                              jwt_claim(msg->deviceName.toStdString()))
@@ -91,33 +105,36 @@ void AuthServer::handleLogin(AuthMessage *msg, const AuthServerInMsgCtx &ctx) {
   resp->success = true;
   resp->token = QString::fromStdString(token);
   Q_EMIT sendMessage(resp, {ctx.connection});
+  Q_EMIT sessionEstablished(ctx.connection, sessionId, msg->username);
 }
 
 void AuthServer::handleLogout(LogoutMessage *msg,
                               const AuthServerInMsgCtx &ctx) {
   auto resp = std::make_shared<LogoutResponseMessage>();
-  auto jti = validate(ctx.token);
-  if (!jti) {
-    resp->success = false;
-    resp->error = "no active session";
-  } else {
-    sessions->revokeSession(*jti);
-    resp->success = true;
-  }
-  Q_EMIT sendMessage(resp, {ctx.connection});
-}
-
-void AuthServer::handleDeleteAccount(DeleteAccountMessage *msg,
-                                     const AuthServerInMsgCtx &ctx) {
-  auto resp = std::make_shared<DeleteAccountResponseMessage>();
-  auto jti = validate(ctx.token);
-  if (!jti) {
+  auto sessionId = resolveSessionId(ctx.token);
+  if (!sessionId) {
     resp->success = false;
     resp->error = "no active session";
     Q_EMIT sendMessage(resp, {ctx.connection});
     return;
   }
-  QString username = sessions->getSession(*jti)->username;
+  sessions->revokeSession(*sessionId);
+  resp->success = true;
+  Q_EMIT sendMessage(resp, {ctx.connection});
+  Q_EMIT sessionEnded(ctx.connection, *sessionId);
+}
+
+void AuthServer::handleDeleteAccount(DeleteAccountMessage *msg,
+                                     const AuthServerInMsgCtx &ctx) {
+  auto resp = std::make_shared<DeleteAccountResponseMessage>();
+  auto sessionId = resolveSessionId(ctx.token);
+  if (!sessionId) {
+    resp->success = false;
+    resp->error = "no active session";
+    Q_EMIT sendMessage(resp, {ctx.connection});
+    return;
+  }
+  QString username = sessions->getSession(*sessionId)->username;
   if (!users->verifyUserCredentials(username, msg->password)) { // re-auth confirmation
     resp->success = false;
     resp->error = "invalid credentials";
@@ -128,5 +145,6 @@ void AuthServer::handleDeleteAccount(DeleteAccountMessage *msg,
   sessions->revokeAllForUser(username);
   resp->success = true;
   Q_EMIT sendMessage(resp, {ctx.connection});
+  Q_EMIT sessionEnded(ctx.connection, *sessionId);
   Q_EMIT accountDeleted(username);
 }

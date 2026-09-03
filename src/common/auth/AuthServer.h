@@ -29,9 +29,23 @@ public:
   // Self-filtering: switches on message type, early-returns non-auth messages.
   void onMessage(std::shared_ptr<Message> msg, const AuthServerInMsgCtx &ctx);
 
+  // The only supported way to turn a wire token into a session id: checks the
+  // signature, issuer and expiry, then that the session is still in the
+  // registry. Everything outside auth authorizes through this — a session id
+  // must never be read straight off a message, or the scheme degrades to a
+  // bearer uuid with a JWT-shaped decoration on top.
+  std::optional<QString> resolveSessionId(const QString &token) const;
+
 Q_SIGNALS:
   // Outbound response to the transport, carrying its destination connection.
   void sendMessage(std::shared_ptr<Message> msg, AuthServerOutMsgCtx out);
+
+  // Session lifecycle, so the host (FileServer) can bind a connection to the
+  // session it just won and drop it again on logout or deletion. Emitted after
+  // the corresponding response, so the client is told first.
+  void sessionEstablished(ConnectionId connection, QString sessionId,
+                          QString username);
+  void sessionEnded(ConnectionId connection, QString sessionId);
 
   // Storage cascade hook for account deletion — FileServer wires this to
   // blob/file cleanup. Declared now, not implemented this pass.
@@ -45,7 +59,6 @@ private:
   // Stubbed this pass — signal/method present, body deferred.
   void handleDeleteAccount(DeleteAccountMessage *msg,
                            const AuthServerInMsgCtx &ctx);
-  std::optional<QString> validate(const QString &token) const;
 
   SessionRegistry *sessions; // not owned
   UsersDb *users;            // not owned

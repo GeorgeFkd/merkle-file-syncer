@@ -3,33 +3,33 @@
 #include <QUuid>
 
 
-bool SessionRegistry::isActive(const QString &token) const {
-  return sessions.contains(token);
+bool SessionRegistry::isActive(const QString &sessionId) const {
+  return sessions.contains(sessionId);
 }
 
 
 QString SessionRegistry::createSession(const QString &username,
                                        const QString &deviceName) {
-    QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QDateTime now = QDateTime::currentDateTime();
-    sessions.insert(token, Session{
+    sessions.insert(sessionId, Session{
                                .username = username,
                                .deviceName = deviceName,
                                .createdAt = now,
                                .lastActivityAt = now,
                            });
-    return token;
+    return sessionId;
 }
 
-std::optional<Session> SessionRegistry::getSession(const QString &token) const {
-    auto it = sessions.constFind(token);
+std::optional<Session> SessionRegistry::getSession(const QString &sessionId) const {
+    auto it = sessions.constFind(sessionId);
     if (it == sessions.constEnd())
         return std::nullopt;
     return it.value();
 }
 
-void SessionRegistry::revokeSession(const QString &token) {
-    sessions.remove(token);
+void SessionRegistry::revokeSession(const QString &sessionId) {
+    sessions.remove(sessionId);
 }
 
 bool SessionRegistry::hasSession(const QString &username,
@@ -42,15 +42,15 @@ bool SessionRegistry::hasSession(const QString &username,
     return false;
 }
 
-void SessionRegistry::touchSession(const QString &token) {
-    auto it = sessions.find(token);
+void SessionRegistry::touchSession(const QString &sessionId) {
+    auto it = sessions.find(sessionId);
     if (it != sessions.end())
         it.value().lastActivityAt = QDateTime::currentDateTime();
 }
 
 
-std::optional<QString> SessionRegistry::getUsername(const QString &token) const {
-  auto it = sessions.constFind(token);
+std::optional<QString> SessionRegistry::getUsername(const QString &sessionId) const {
+  auto it = sessions.constFind(sessionId);
   if (it == sessions.constEnd())
     return std::nullopt;
   return it.value().username;
@@ -66,8 +66,8 @@ void SessionRegistry::revokeAllForUser(const QString &username) {
 }
 
 
-std::optional<QString> SessionRegistry::getDeviceName(const QString &token) const {
-  auto it = sessions.constFind(token);
+std::optional<QString> SessionRegistry::getDeviceName(const QString &sessionId) const {
+  auto it = sessions.constFind(sessionId);
   if (it == sessions.constEnd())
     return std::nullopt;
   return it.value().deviceName;

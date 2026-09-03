@@ -28,6 +28,7 @@ target_link_libraries(
           storage
           sessionregistry
           users_db
+          auth_server
           fs_metadata
           Qt6::Core
           Qt6::Network

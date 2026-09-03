@@ -1,4 +1,5 @@
 #pragma once
+#include "AuthClient.h"
 #include "FileTransferClient.h"
 #include "ClientTransport.h"
 #include "FSMetadata.h"
@@ -8,7 +9,6 @@
 #include "MerkleTree.h"
 #include "Messages.h"
 #include "NaiveSyncClient.h"
-#include "UsersDb.h"
 #include <QString>
 #include <QTimer>
 
@@ -78,20 +78,22 @@ private:
   SyncStrategy syncStrategy;
 
   // --- Connection / auth state ---
+  // AuthClient owns the session token and every auth exchange; nothing here
+  // touches either. Outbound messages get the token stamped on at send time.
   std::unique_ptr<ClientTransport> transport;
   ClientState state = ClientState::Disconnected;
-  QString token;
+  AuthClient authClient;
   void connectToServer();
-  void sendAuthRequest();
+  void sendMessageToServer(std::shared_ptr<Message>);
   void dispatch(std::shared_ptr<Message>);
   void onConnected();
   void onDisconnected();
   void onAuthenticated();
   void setupSocketConnections();
+  void setupAuthConnections();
   void setupNegotiationConnections();
   void setupFileTransferConnections();
   QString getDeviceName();
-  void handleAuthResponse(AuthResponseMessage *);
 
   // --- Ticking ---
   QTimer timer;
@@ -106,7 +108,6 @@ private:
 
   // --- Local state (storage + DB + merkle tree) ---
   std::unique_ptr<LocalFileStorage> fileStorage;
-  UsersDb usersDb;
   FSMetadata database;
   std::unique_ptr<MerkleTree> merkleTree;
   MerkleTree *getMerkleTree();

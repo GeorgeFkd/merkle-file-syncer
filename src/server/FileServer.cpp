@@ -7,11 +7,19 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QUuid>
 #include <memory>
 #include <qnamespace.h>
 
 void FileServer::configure(FileServerConfig config) {
   this->fileStorage = std::move(config.storage);
+  // AuthServer holds raw pointers to both, so they have to outlive it and be
+  // in place first. It also loads the signing keys in its constructor (fatal
+  // if absent), which is why it is built here and not as a value member.
+  this->usersDb =
+      config.users ? std::move(config.users) : std::make_unique<UsersDb>();
+  this->authServer =
+      std::make_unique<AuthServer>(&sessionStore, usersDb.get(), this);
   switch (config.protocol) {
   case TransportProtocol::LocalSocket:
     transport = std::make_unique<LocalServerTransport>();
@@ -29,11 +37,13 @@ void FileServer::start() {
   transport->start();
 }
 
-void FileServer::sendToClient(const QString &token,
+void FileServer::sendToClient(const ConnectionId &conn,
                               std::shared_ptr<Message> msg) {
-  auto *socket = getSocketFromToken(token);
+  // QHash::key is a linear scan, so this is O(connections) per send. Fine at
+  // current scale; the fix when it stops being fine is a second map.
+  auto *socket = socketToConn.key(conn, nullptr);
   if (!socket) {
-    qWarning() << "no socket for token" << token;
+    qWarning() << "no socket for connection" << conn;
     return;
   }
   transport->send(socket, msg);
@@ -41,31 +51,64 @@ void FileServer::sendToClient(const QString &token,
 
 FileServer::~FileServer() {}
 
-QIODevice *FileServer::getSocketFromToken(const QString &token) {
-  auto socket = socketToTokenMap.key(token, nullptr);
-  if (!socket) {
-    qDebug() << "could not find socket of token: " << token;
-    return nullptr;
-  }
-  return socket;
-}
-
 void FileServer::setupConnections() {
   setupSocketConnections();
+  setupAuthConnections();
   setupNegotiationConnections();
   setupFileTransferConnections();
-  QObject::connect(
-      this, &FileServer::sendMessage, this,
-      [this](std::shared_ptr<Message> msg) { sendToClient(msg->token, msg); });
+  QObject::connect(this, &FileServer::sendMessage, this,
+                   [this](std::shared_ptr<Message> msg, ConnectionId conn) {
+                     sendToClient(conn, msg);
+                   });
+}
+
+void FileServer::setupAuthConnections() {
+  QObject::connect(authServer.get(), &AuthServer::sendMessage, this,
+                   [this](std::shared_ptr<Message> msg,
+                          AuthServerOutMsgCtx out) {
+                     sendToClient(out.connection, msg);
+                   });
+  QObject::connect(authServer.get(), &AuthServer::sessionEstablished, this,
+                   &FileServer::bindSession);
+  QObject::connect(authServer.get(), &AuthServer::sessionEnded, this,
+                   [this](ConnectionId conn, QString) { unbindSession(conn); });
+}
+
+void FileServer::bindSession(ConnectionId conn, QString sessionId,
+                             QString username) {
+  connToSession.insert(conn, sessionId);
+  qDebug() << "bound connection" << conn << "to session for" << username;
+}
+
+void FileServer::unbindSession(const ConnectionId &conn) {
+  connToSession.remove(conn);
+}
+
+std::optional<QString> FileServer::authorize(const ConnectionId &conn,
+                                             const QString &token) {
+  auto bound = connToSession.constFind(conn);
+  if (bound == connToSession.constEnd())
+    return std::nullopt; // connection has not logged in
+  auto presented = authServer->resolveSessionId(token);
+  if (!presented || *presented != *bound)
+    return std::nullopt; // absent, invalid, revoked, or another connection's
+  sessionStore.touchSession(*bound);
+  return *bound;
+}
+
+std::optional<QString>
+FileServer::usernameFor(const ConnectionId &conn) const {
+  auto sessionId = connToSession.value(conn);
+  if (sessionId.isEmpty())
+    return std::nullopt;
+  return sessionStore.getUsername(sessionId);
 }
 
 void FileServer::setupNegotiationConnections() {
   QObject::connect(
       &merkleSyncServer, &MerkleSyncServer::messageSendRequest, this,
       [this](ConnectionId conn, std::shared_ptr<MerkleProtocolMessage> proto) {
-        auto wire = toWireMessage(proto.get());
-        wire->token = conn;
-        sendToClient(conn, wire);
+        sendToClient(conn, toWireMessage(proto.get()));
       });
   QObject::connect(&naiveSyncServer, &NaiveSyncServer::sendMessage, this,
                    [this](std::shared_ptr<Message> msg, ConnectionId conn) {
@@ -77,9 +120,9 @@ void FileServer::setupFileTransferConnections() {
   QObject::connect(
       fileTransferServer.get(), &FileTransferServer::sendMessage, this,
       [this](std::shared_ptr<Message> msg, FileTransferServerOutMsgCtx out) {
-        auto user = getUsernameFromToken(out.clientId);
+        auto user = usernameFor(out.clientId);
         if (!user) {
-          qDebug() << "User for token: " << out.clientId << "not found";
+          qDebug() << "User for connection: " << out.clientId << "not found";
           return;
         }
         if (msg->type() == MessageType::SpecifyChunkSizeDownload) {
@@ -92,7 +135,7 @@ void FileServer::setupFileTransferConnections() {
   QObject::connect(
       fileTransferServer.get(), &FileTransferServer::uploadCompleted, this,
       [this](ClientId conn, QString path) {
-        auto user = getUsernameFromToken(conn); // conn is the token
+        auto user = usernameFor(conn);
         if (!user)
           return;
         auto fileMetadata =
@@ -100,14 +143,16 @@ void FileServer::setupFileTransferConnections() {
         fileTransferServer->commitUpload(conn, path);
         recordFile(*user, path, fileMetadata.second, fileMetadata.first);
       });
+  // FileTransferServer self-filters by message type, so it sees the whole
+  // inbound stream — but only once the connection has proven its session.
   QObject::connect(transport.get(), &ServerTransport::messageReady, this,
                    [this](QIODevice *socket, std::shared_ptr<Message> msg) {
-                     ClientId conn = socketToTokenMap.value(socket);
-                     auto user = getUsernameFromToken(conn);
-                     if (!user) {
-                       qDebug() << "Could not find user from token: " << conn;
+                     ClientId conn = socketToConn.value(socket);
+                     if (conn.isEmpty() || !authorize(conn, msg->token))
                        return;
-                     }
+                     auto user = usernameFor(conn);
+                     if (!user)
+                       return;
                      FileTransferServerInMsgCtx ctx{conn, user.value()};
                      fileTransferServer->onMessage(msg, ctx);
                      return;
@@ -148,18 +193,27 @@ void FileServer::setupSocketConnections() {
                    &FileServer::onSocketDisconnected);
 }
 
-void FileServer::onNewConnection() { qDebug() << "New connection received"; }
+void FileServer::onNewConnection(QIODevice *socket) {
+  // Identity is minted here, before any auth: register responses and failed
+  // logins have to be routable too.
+  ConnectionId conn = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  socketToConn.insert(socket, conn);
+  qDebug() << "New connection received:" << conn;
+}
 
 QString FileServer::serverName() { return transport->endpoint(); }
 
 bool FileServer::isListening() { return transport->isListening(); }
 
 void FileServer::onSocketDisconnected(QIODevice *socket) {
-  auto it = socketToTokenMap.find(socket);
-  if (it != socketToTokenMap.end()) {
-    sessionStore.revokeSession(it.value());
-    socketToTokenMap.erase(it);
-  }
+  auto conn = socketToConn.take(socket);
+  if (conn.isEmpty())
+    return;
+  // Sessions currently die with the connection, so the token a client holds is
+  // useless after a drop and it re-logs in on reconnect.
+  auto sessionId = connToSession.take(conn);
+  if (!sessionId.isEmpty())
+    sessionStore.revokeSession(sessionId);
 }
 
 void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
@@ -168,35 +222,51 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
     return;
   }
   qDebug() << "Dispatching server message to handler." << (int)msg->type();
+  const ConnectionId conn = socketToConn.value(socket);
+  if (conn.isEmpty()) {
+    qWarning() << "message from a socket with no connection id; dropping";
+    return;
+  }
+
   switch (msg->type()) {
-  case MessageType::ClientAuth: {
-    auto resp = handleAuth(std::static_pointer_cast<AuthMessage>(msg));
-    if (resp->success) {
-      socketToTokenMap.insert(socket, resp->token);
-      qDebug() << "Inserted token " << resp->token
-               << " in store and created session";
-    }
-    transport->send(socket, resp);
+  case MessageType::Register:
+  case MessageType::ClientAuth:
+  case MessageType::Logout:
+  case MessageType::DeleteAccount:
+    authServer->onMessage(msg, AuthServerInMsgCtx{conn, msg->token});
+    return;
+  default:
     break;
   }
+
+  // Everything past this point needs a session. Rejecting is deliberate: this
+  // used to be an assert in getUserFrom, which a client could trip remotely.
+  if (!authorize(conn, msg->token)) {
+    qWarning() << "unauthenticated message of type" << (int)msg->type()
+               << "on connection" << conn << "- dropping";
+    return;
+  }
+
+  switch (msg->type()) {
   case MessageType::DeleteRequest: {
     auto resp = handleDeleteRequest(
-        std::static_pointer_cast<DeleteRequestMessage>(msg));
+        std::static_pointer_cast<DeleteRequestMessage>(msg), conn);
     transport->send(socket, resp);
     break;
   }
   case MessageType::MerkleSync: {
-    handleMerkleSyncRequest(std::static_pointer_cast<MerkleSyncMessage>(msg));
+    handleMerkleSyncRequest(std::static_pointer_cast<MerkleSyncMessage>(msg),
+                            conn);
     break;
   }
   case MessageType::ListRequest: {
     auto actualMsg = std::static_pointer_cast<ListRequestMessage>(msg);
-    handleListRequest(actualMsg);
+    handleListRequest(actualMsg, conn);
     break;
   }
   case MessageType::RequestChunkSizeUpload: {
     auto *m = static_cast<RequestChunkSizeForUpload *>(msg.get());
-    storeUploadMetadata(m);
+    storeUploadMetadata(m, conn);
     break;
   }
   default: {
@@ -206,9 +276,10 @@ void FileServer::dispatch(QIODevice *socket, std::shared_ptr<Message> msg) {
   }
 }
 
-void FileServer::storeUploadMetadata(RequestChunkSizeForUpload *msg) {
+void FileServer::storeUploadMetadata(RequestChunkSizeForUpload *msg,
+                                    const ConnectionId &conn) {
   QPair<QByteArray, QDateTime> metadata = {msg->hash, msg->mtime};
-  pendingTransfersMetadata.insert(transferMetadataKey(msg->token, msg->path),
+  pendingTransfersMetadata.insert(transferMetadataKey(conn, msg->path),
                                   metadata);
   qDebug() << "Inserted at: " << msg->path << "  " << metadata.second << "  "
            << metadata.first;
@@ -224,23 +295,18 @@ bool FileServer::writeFile(const QString &user, const QString &file,
   return true;
 }
 
-QString FileServer::getUserFrom(Message *msg) {
-  auto username = getUsernameFromToken(msg->token);
-  Q_ASSERT_X(username.has_value(), "getUserFrom",
-             "token must resolve to a user for all non-auth handlers");
-  return username.value();
-}
-
 std::shared_ptr<DeleteRequestMessage>
-FileServer::handleDeleteRequest(std::shared_ptr<DeleteRequestMessage> msg) {
+FileServer::handleDeleteRequest(std::shared_ptr<DeleteRequestMessage> msg,
+                                const ConnectionId &conn) {
   auto response = std::make_shared<DeleteRequestMessage>();
   response->path = msg->path;
 
-  auto username = getUserFrom(msg.get());
+  auto username = usernameFor(conn).value();
   auto storedMtime = database.readMtime(username, msg->path);
 
-  qDebug() << "Delete request for user:" << username
-           << "at device:" << sessionStore.getDeviceName(msg->token).value();
+  qDebug() << "Delete request for user:" << username << "at device:"
+           << sessionStore.getDeviceName(connToSession.value(conn))
+                  .value_or(QStringLiteral("<unknown>"));
 
   if (!storedMtime.has_value()) {
     qDebug() << "handleDeleteRequest: no stored mtime, marking Done";
@@ -279,21 +345,20 @@ MerkleTree *FileServer::getUserTree(const QString &username) {
 }
 
 void FileServer::handleMerkleSyncRequest(
-    std::shared_ptr<MerkleSyncMessage> msg) {
+    std::shared_ptr<MerkleSyncMessage> msg, const ConnectionId &conn) {
   qDebug() << "Handling merkle sync message at server";
-  auto username = getUserFrom(msg.get());
+  auto username = usernameFor(conn).value();
 
   auto serverTree = getUserTree(username);
-  merkleSyncServer.onMessage(toProtocolMessage(msg.get()), serverTree,
-                             msg->token);
+  merkleSyncServer.onMessage(toProtocolMessage(msg.get()), serverTree, conn);
 }
 
-void FileServer::handleListRequest(std::shared_ptr<ListRequestMessage> msg) {
-  auto username = getUserFrom(msg.get());
+void FileServer::handleListRequest(std::shared_ptr<ListRequestMessage> msg,
+                                  const ConnectionId &conn) {
+  auto username = usernameFor(conn).value();
   auto response = std::make_shared<ListResponseMessage>();
-  response->token = msg->token;
   if (!msg->useMerkle) {
-    naiveSyncServer.onMessage(msg, msg->token, &database, username);
+    naiveSyncServer.onMessage(msg, conn, &database, username);
     return;
   }
 
@@ -319,58 +384,11 @@ void FileServer::handleListRequest(std::shared_ptr<ListRequestMessage> msg) {
     response->entries.append({path, it.value(), true});
   }
 
-  Q_EMIT(sendMessage(response));
+  Q_EMIT(sendMessage(response, conn));
   return;
 }
 
 FileStorage *FileServer::getStorage() { return fileStorage.get(); }
-
-std::shared_ptr<AuthResponseMessage>
-FileServer::handleAuth(std::shared_ptr<AuthMessage> msg) {
-  qDebug() << "User: " << msg->username << "Password: " << msg->password;
-  auto response = std::make_shared<AuthResponseMessage>();
-
-  if (msg->username.isEmpty() || msg->deviceName.isEmpty()) {
-    qDebug() << "handleAuth: username or deviceName empty";
-    response->success = false;
-    response->error = "username and deviceName required";
-    return response;
-  }
-
-  if (sessionStore.hasSession(msg->username, msg->deviceName)) {
-    qDebug() << "handleAuth: device already connected for" << msg->username
-             << msg->deviceName;
-    response->success = false;
-    response->error = "device already connected";
-    return response;
-  }
-
-  if (!usersDb.userExists(msg->username, msg->password)) {
-    qDebug() << "handleAuth: invalid credentials for" << msg->username;
-    response->success = false;
-    response->error = "invalid credentials";
-    return response;
-  }
-
-  QString token = sessionStore.createSession(msg->username, msg->deviceName);
-  response->success = true;
-  response->token = token;
-  return response;
-}
-
-// TODO: Add proper backend for credentials handling
-bool FileServer::verifyUserCredentials(const QString &username,
-                                       const QString &password) {
-  return true;
-}
-
-std::optional<Session> FileServer::resolveSession(const QString &token) {
-  return sessionStore.getSession(token);
-}
-
-std::optional<QString> FileServer::getUsernameFromToken(const QString &token) {
-  return sessionStore.getUsername(token);
-}
 
 void FileServer::handleUnrecognized(Message *msg) {
   qDebug() << "Unrecognized message type received from server";

@@ -18,5 +18,5 @@ target_link_libraries(auth_client PRIVATE Qt6::Core PUBLIC users_db PUBLIC messa
 
 find_package(jwt-cpp CONFIG REQUIRED)
 qt_add_library(auth_server STATIC AuthServer.cpp AuthServer.h)
-target_include_directories(auth_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/common/communication)
+target_include_directories(auth_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/common/communication)
 target_link_libraries(auth_server PRIVATE Qt6::Core PUBLIC users_db PUBLIC messages sessionregistry PUBLIC jwt-cpp::jwt-cpp PRIVATE key_provider)

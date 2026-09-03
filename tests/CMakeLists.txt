@@ -39,7 +39,10 @@ if(BUILD_S3_IMPL)
                              PRIVATE $ENV{VCPKG_ROOT}/installed/x64-linux)
 endif()
 set_target_properties(sync_tests PROPERTIES AUTOMOC ON)
-gtest_discover_tests(sync_tests)
+gtest_discover_tests(sync_tests
+PROPERTIES
+    ENVIRONMENT "JWT_PRIVATE_KEY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/jwt_private.pem"
+    ENVIRONMENT "JWT_PUBLIC_KEY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/certs/jwt_public.pem")
 
 
 add_executable(storage_tests storage_tests.cpp)
