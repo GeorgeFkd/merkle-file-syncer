@@ -5,6 +5,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <memory>
+#include <sys/stat.h>
 LocalFileStorage::LocalFileStorage() {
   QDir().mkpath(QCoreApplication::applicationDirPath() + "/storage");
 }
@@ -97,6 +98,18 @@ QList<QString> LocalFileStorage::listFiles(const QString &user) const {
   return files;
 }
 
+QList<QString> LocalFileStorage::listDirectories(const QString &user) const {
+  QList<QString> dirs;
+  QString userRoot = rootPath(user);
+  QDirIterator it(userRoot, QDir::Dirs | QDir::NoDotAndDotDot,
+                  QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    QString fullDirPath = it.next();
+    dirs.append(QDir(userRoot).relativeFilePath(fullDirPath));
+  }
+  return dirs;
+}
+
 std::optional<QDateTime>
 LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
   QString path = fullPath(user, filename);
@@ -104,6 +117,16 @@ LocalFileStorage::getMtime(const QString &user, const QString &filename) const {
   if (!info.exists())
     return {};
   return info.lastModified();
+}
+
+std::optional<quint64> LocalFileStorage::getInode(const QString &user,
+                                                  const QString &filename) const {
+  QString path = fullPath(user, filename);
+  struct stat st;
+  if (::stat(path.toUtf8().constData(), &st) != 0) {
+    return std::nullopt;
+  }
+  return static_cast<quint64>(st.st_ino);
 }
 
 std::optional<qint64> LocalFileStorage::fileSize(const QString &user,

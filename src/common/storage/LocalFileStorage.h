@@ -13,11 +13,14 @@ public:
                                      const QString &filename) const override;
   bool deleteFile(const QString &user, const QString &filename) override;
   QList<QString> listFiles(const QString &user) const override;
+  QList<QString> listDirectories(const QString &user) const;
   void setRoot(const QString &path);
   QString rootPath(const QString &user) const;
   void cleanup(const QString &user) override;
   std::optional<QDateTime> getMtime(const QString &user,
                                     const QString &filename) const;
+  std::optional<quint64> getInode(const QString &user,
+                                  const QString &filename) const;
   std::optional<qint64> fileSize(const QString &user,
                                  const QString &path) const override;
   std::optional<QByteArray> readRange(const QString &user, const QString &path,
