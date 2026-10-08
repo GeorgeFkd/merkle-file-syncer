@@ -3,7 +3,7 @@
 #include "FileTransferServer.h"
 #include "LocalFileStorage.h"
 #include "Messages.h"
-#include "S3FileStorage.h"
+#include "StorageTags.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QEventLoop>
@@ -15,28 +15,6 @@
 // S3 requires every part except the last to be >= 5 MB. Use this whenever a
 // test needs a genuine multi-part transfer that must also be valid on S3.
 static constexpr qint64 S3_MIN_PART_SIZE = 5 * 1024 * 1024;
-
-// ---- storage backend tags -------------------------------------------------
-
-struct LocalStorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
-    auto s = std::make_unique<LocalFileStorage>();
-    s->setRoot(rootPath);
-    return s;
-  }
-};
-
-struct S3StorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &) {
-    auto s = std::make_unique<S3FileStorage>();
-    s->init(S3Config{.endpoint = "localhost:9000",
-                     .accessKey = "minioadmin",
-                     .secretKey = "minioadmin",
-                     .bucket = "test-bucket",
-                     .useSSL = false});
-    return s;
-  }
-};
 
 // The tag selects the SERVER storage backend only. The client is ALWAYS
 // LocalFileStorage (a client is a device with a real filesystem); S3 is only
@@ -59,7 +37,7 @@ protected:
     auto localClient = std::make_unique<LocalFileStorage>();
     localClient->setRoot(clientDir.path());
     clientStorage = std::move(localClient);
-    serverStorage = Tag::makeStorage(serverDir.path());
+    serverStorage = Tag::makeStorage(serverDir.path(), runId);
     clientStorage->cleanup(user);
     serverStorage->cleanup(user);
 
@@ -94,7 +72,7 @@ protected:
     clientStorage->cleanup(user);
     serverStorage->cleanup(user);
     QDir(clientDir.path()).removeRecursively();
-    QDir(serverDir.path()).removeRecursively();
+    EXPECT_TRUE(Tag::destroyStorage(serverDir.path(), runId));
   }
 
   // Capture terminal transfer events so tests can wait on them.

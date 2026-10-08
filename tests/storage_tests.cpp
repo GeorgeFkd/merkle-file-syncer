@@ -1,29 +1,8 @@
-#include "LocalFileStorage.h"
-#include "S3FileStorage.h"
+#include "StorageTags.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QUuid>
 #include <gtest/gtest.h>
-
-struct LocalStorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
-    auto s = std::make_unique<LocalFileStorage>();
-    s->setRoot(rootPath);
-    return s;
-  }
-};
-
-struct S3StorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &) {
-    auto s = std::make_unique<S3FileStorage>();
-    s->init(S3Config{.endpoint = "localhost:9000",
-                     .accessKey = "minioadmin",
-                     .secretKey = "minioadmin",
-                     .bucket = "test-bucket",
-                     .useSSL = false});
-    return s;
-  }
-};
 
 using StorageImplementations = ::testing::Types<LocalStorageTag, S3StorageTag>;
 
@@ -34,7 +13,7 @@ protected:
     rootDir = QDir(QDir::tempPath() + "/test_storage/" + runId);
     QDir().mkpath(rootDir.path());
 
-    storage = Tag::makeStorage(rootDir.path());
+    storage = Tag::makeStorage(rootDir.path(), runId);
     storage->cleanup(user);
     storage->cleanup(otherUser);
   }
@@ -42,8 +21,19 @@ protected:
   void TearDown() override {
     storage->cleanup(user);
     storage->cleanup(otherUser);
-    QDir(rootDir.path()).removeRecursively();
+    EXPECT_TRUE(Tag::destroyStorage(rootDir.path(), runId));
+    tornDown = true;
   }
+
+  // rapidcheck fixture props call SetUp/TearDown without an exception guard, so
+  // a discarded (RC_PRE) or failing case skips TearDown. Release the run's
+  // storage here so those cases do not leak a bucket/directory.
+  ~StorageTest() override {
+    if (!runId.isEmpty() && !tornDown)
+      Tag::destroyStorage(rootDir.path(), runId);
+  }
+
+  bool tornDown = false;
 
   QString runId;
   QDir rootDir;

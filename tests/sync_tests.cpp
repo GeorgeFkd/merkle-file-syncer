@@ -2,7 +2,7 @@
 #include "FileServer.h"
 #include "FileTree.h"
 #include "LocalFileStorage.h"
-#include "S3FileStorage.h"
+#include "StorageTags.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QEventLoop>
@@ -32,26 +32,6 @@ std::unique_ptr<UsersDb> seededUsersDb() {
   return users;
 }
 } // namespace
-
-struct LocalStorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
-    auto s = std::make_unique<LocalFileStorage>();
-    s->setRoot(rootPath);
-    return s;
-  }
-};
-
-struct S3StorageTag {
-  static std::unique_ptr<FileStorage> makeStorage(const QString &rootPath) {
-    auto s = std::make_unique<S3FileStorage>();
-    s->init(S3Config{.endpoint = "localhost:9000",
-                     .accessKey = "minioadmin",
-                     .secretKey = "minioadmin",
-                     .bucket = "test-bucket",
-                     .useSSL = false});
-    return s;
-  }
-};
 
 struct LocalNaiveLocalSocketTag {
   using Storage = LocalStorageTag;
@@ -125,7 +105,7 @@ struct S3MerkleTag {
 template <typename Tag> class SyncTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     clientDir = new QDir(QCoreApplication::applicationDirPath() +
                          "/test_client/" + runId);
     serverDir = new QDir(QCoreApplication::applicationDirPath() +
@@ -138,7 +118,7 @@ protected:
     fileServer.configure(FileServerConfig{
         .protocol = Tag::protocol,
         .serverName = endpoint,
-        .storage = Tag::Storage::makeStorage(serverDir->path()),
+        .storage = Tag::Storage::makeStorage(serverDir->path(), runId),
         .users = seededUsersDb()});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
@@ -173,6 +153,7 @@ protected:
     }
     QDir(clientDir->path()).removeRecursively();
     fileServer.getStorage()->cleanup(username);
+    EXPECT_TRUE(Tag::Storage::destroyStorage(serverDir->path(), runId));
     delete clientDir;
     delete serverDir;
   }
@@ -199,6 +180,7 @@ protected:
                                                  this->username);
   }
 
+  QString runId;
   std::unique_ptr<FileClient> client;
   QDir *clientDir = nullptr;
   QDir *serverDir = nullptr;
@@ -338,7 +320,7 @@ protected:
     fileServer.configure(FileServerConfig{
         .protocol = Tag::protocol,
         .serverName = endpoint,
-        .storage = Tag::Storage::makeStorage(serverDir.path()),
+        .storage = Tag::Storage::makeStorage(serverDir.path(), runId),
         .users = seededUsersDb()});
     fileServer.getStorage()->cleanup(username);
     fileServer.start();
@@ -368,6 +350,7 @@ protected:
       QDir(dir).removeRecursively();
     }
     fileServer.getStorage()->cleanup(username);
+    EXPECT_TRUE(Tag::Storage::destroyStorage(serverDir.path(), runId));
   }
 
   std::unique_ptr<FileClient> makeClient(const QString &deviceName) {
@@ -598,7 +581,7 @@ protected:
     fileServer.configure(FileServerConfig{
         .protocol = TransportProtocol::LocalSocket,
         .serverName = "auth_sync_test_" + runId,
-        .storage = LocalStorageTag::makeStorage(serverDir.path()),
+        .storage = LocalStorageTag::makeStorage(serverDir.path(), runId),
         .users = seededUsersDb()});
     fileServer.getStorage()->cleanup(kUsername);
     fileServer.start();
@@ -607,6 +590,7 @@ protected:
   void TearDown() override {
     QDir(clientDir.path()).removeRecursively();
     fileServer.getStorage()->cleanup(kUsername);
+    EXPECT_TRUE(LocalStorageTag::destroyStorage(serverDir.path(), runId));
   }
 
   std::unique_ptr<FileClient> makeClient(const QString &password,
