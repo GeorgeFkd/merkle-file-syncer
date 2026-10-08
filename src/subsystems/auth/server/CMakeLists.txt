@@ -12,11 +12,7 @@ add_library(users_db STATIC UsersDb.cpp UsersDb.h)
 target_include_directories(users_db PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(users_db PUBLIC Qt6::Core PRIVATE sodium::sodium)
 
-qt_add_library(auth_client STATIC AuthClient.cpp AuthClient.h)
-target_include_directories(auth_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/common/communication)
-target_link_libraries(auth_client PRIVATE Qt6::Core PUBLIC users_db PUBLIC messages)
-
 find_package(jwt-cpp CONFIG REQUIRED)
 qt_add_library(auth_server STATIC AuthServer.cpp AuthServer.h)
-target_include_directories(auth_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/common/communication)
+target_include_directories(auth_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/subsystems/communication)
 target_link_libraries(auth_server PRIVATE Qt6::Core PUBLIC users_db PUBLIC messages sessionregistry PUBLIC jwt-cpp::jwt-cpp PRIVATE key_provider)

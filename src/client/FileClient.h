@@ -3,6 +3,7 @@
 #include "FileTransferClient.h"
 #include "ClientTransport.h"
 #include "FSMetadata.h"
+#include "FSScanner.h"
 #include "LocalFileStorage.h"
 #include "MerkleProtocolMessages.h"
 #include "MerkleSyncClient.h"
@@ -21,17 +22,10 @@ enum class ClientState {
   Authenticated,
 };
 
-// A snapshot of how the local filesystem differs from the last-known DB state.
-// Produced by a pure scan; consumed by an apply step that reconciles the DB
-// and merkle tree. New/modified carry the filesystem mtime; deleted carry the
-// time the deletion was detected (or its recorded tombstone time).
-// TODO: Add inodes so i can later detect renames
-using FileChangeMetadata = QPair<QString, QDateTime>;
-struct LocalChangeSet {
-  QList<FileChangeMetadata> newFiles;
-  QList<FileChangeMetadata> modifiedFiles;
-  QList<FileChangeMetadata> deletedFiles;
-};
+// LocalChangeSet/FileChangeMetadata come from FSScanner.h. Produced by a pure
+// scan; consumed by an apply step that reconciles the DB and merkle tree.
+// New/modified carry the filesystem mtime; deleted carry the time the
+// deletion was detected (or its recorded tombstone time).
 
 struct FileClientConfig {
   TransportProtocol protocol;
@@ -166,6 +160,8 @@ inline QDebug operator<<(QDebug dbg, const LocalChangeSet &changes) {
                 << "  new: " << changes.newFiles << "\n"
                 << "  modified: " << changes.modifiedFiles << "\n"
                 << "  deleted: " << changes.deletedFiles << "\n"
+                << "  renamed: " << changes.renamedFiles.size() << "\n"
+                << "  renamed directories: " << changes.renamedDirectories.size() << "\n"
                 << ")";
   return dbg;
 }

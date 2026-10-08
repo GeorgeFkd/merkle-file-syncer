@@ -5,7 +5,7 @@ include(GoogleTest)
 
 set(TEST_COMMON_INCLUDES
     ${CMAKE_SOURCE_DIR}/src/client ${CMAKE_SOURCE_DIR}/src/server
-    # ${CMAKE_SOURCE_DIR}/src/common
+    # ${CMAKE_SOURCE_DIR}/src/subsystems
     ${CMAKE_SOURCE_DIR}/rapidcheck/extras/gtest/include)
 
 add_executable(tree_tests tree_tests.cpp)
@@ -76,9 +76,11 @@ target_link_libraries(
             Qt6::Core
 )
 target_include_directories(protocol_tests PRIVATE ${TEST_COMMON_INCLUDES}
-${CMAKE_SOURCE_DIR}/src/common/filesystem
-${CMAKE_SOURCE_DIR}/src/common/sync_protocol
-${CMAKE_SOURCE_DIR}/src/common/fs_metadata)
+${CMAKE_SOURCE_DIR}/src/subsystems/filesystem
+${CMAKE_SOURCE_DIR}/src/subsystems/sync_protocol
+${CMAKE_SOURCE_DIR}/src/subsystems/sync_protocol/client
+${CMAKE_SOURCE_DIR}/src/subsystems/sync_protocol/server
+${CMAKE_SOURCE_DIR}/src/subsystems/fs_metadata)
 set_target_properties(protocol_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(protocol_tests PROPERTIES ENVIRONMENT "RC_PARAMS=max_success=500 max_size=300")
 
@@ -96,7 +98,9 @@ target_link_libraries(chunking_tests PRIVATE
 
 target_include_directories(chunking_tests PRIVATE
   ${TEST_COMMON_INCLUDES}
-  ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol
+  ${CMAKE_SOURCE_DIR}/src/subsystems/chunking_protocol
+  ${CMAKE_SOURCE_DIR}/src/subsystems/chunking_protocol/client
+  ${CMAKE_SOURCE_DIR}/src/subsystems/chunking_protocol/server
 )
 
 set_target_properties(chunking_tests PROPERTIES AUTOMOC ON)
@@ -121,8 +125,10 @@ target_link_libraries(file_transfer_tests PRIVATE
 )
 target_include_directories(file_transfer_tests PRIVATE
   ${TEST_COMMON_INCLUDES}
-  ${CMAKE_SOURCE_DIR}/src/common/file_transfer
-  ${CMAKE_SOURCE_DIR}/src/common/chunking_protocol
+  ${CMAKE_SOURCE_DIR}/src/subsystems/file_transfer/client
+  ${CMAKE_SOURCE_DIR}/src/subsystems/file_transfer/server
+  ${CMAKE_SOURCE_DIR}/src/subsystems/chunking_protocol/client
+  ${CMAKE_SOURCE_DIR}/src/subsystems/chunking_protocol/server
 )
 if(BUILD_S3_IMPL)
   target_include_directories(file_transfer_tests
@@ -142,8 +148,9 @@ target_link_libraries(
             Qt6::Network
 )
 target_include_directories(networking_tests PRIVATE ${TEST_COMMON_INCLUDES}
-  ${CMAKE_SOURCE_DIR}/src/common/networking
-  ${CMAKE_SOURCE_DIR}/src/common/communication)
+  ${CMAKE_SOURCE_DIR}/src/subsystems/networking/client
+  ${CMAKE_SOURCE_DIR}/src/subsystems/networking/server
+  ${CMAKE_SOURCE_DIR}/src/subsystems/communication)
 set_target_properties(networking_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(networking_tests
 PROPERTIES
@@ -162,7 +169,7 @@ target_link_libraries(
           storage
           Qt6::Core)
 target_include_directories(fs_scanner_tests PRIVATE ${TEST_COMMON_INCLUDES}
-  ${CMAKE_SOURCE_DIR}/src/common/fs_scanner)
+  ${CMAKE_SOURCE_DIR}/src/subsystems/fs_scanner)
 if(BUILD_S3_IMPL)
   target_include_directories(fs_scanner_tests
                              PRIVATE $ENV{VCPKG_ROOT}/installed/x64-linux)
@@ -183,7 +190,8 @@ target_link_libraries(auth_tests PRIVATE
 )
 target_include_directories(auth_tests PRIVATE
   ${TEST_COMMON_INCLUDES}
-  ${CMAKE_SOURCE_DIR}/src/common/auth
+  ${CMAKE_SOURCE_DIR}/src/subsystems/auth/client
+  ${CMAKE_SOURCE_DIR}/src/subsystems/auth/server
 )
 set_target_properties(auth_tests PROPERTIES AUTOMOC ON)
 gtest_discover_tests(auth_tests)

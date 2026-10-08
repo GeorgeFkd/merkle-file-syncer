@@ -9,15 +9,16 @@ qt_add_library(merkle_server_lib STATIC
 
 target_include_directories(
   merkle_server_lib
-  PRIVATE ${CMAKE_SOURCE_DIR}/src/common/communication
-         ${CMAKE_SOURCE_DIR}/src/common/storage
-         ${CMAKE_SOURCE_DIR}/src/common/filesystem
-         ${CMAKE_SOURCE_DIR}/src/common/auth
-         ${CMAKE_SOURCE_DIR}/src/common/sync_protocol
-         ${CMAKE_SOURCE_DIR}/src/common/fs_metadata
-         ${CMAKE_SOURCE_DIR}/src/common/hashing
-         ${CMAKE_SOURCE_DIR}/src/common/file_transfer
-         ${CMAKE_SOURCE_DIR}/src/common/networking
+  PRIVATE ${CMAKE_SOURCE_DIR}/src/subsystems/communication
+         ${CMAKE_SOURCE_DIR}/src/subsystems/storage
+         ${CMAKE_SOURCE_DIR}/src/subsystems/filesystem
+         ${CMAKE_SOURCE_DIR}/src/subsystems/auth/server
+         ${CMAKE_SOURCE_DIR}/src/subsystems/sync_protocol
+         ${CMAKE_SOURCE_DIR}/src/subsystems/sync_protocol/server
+         ${CMAKE_SOURCE_DIR}/src/subsystems/fs_metadata
+         ${CMAKE_SOURCE_DIR}/src/subsystems/hashing
+         ${CMAKE_SOURCE_DIR}/src/subsystems/file_transfer/server
+         ${CMAKE_SOURCE_DIR}/src/subsystems/networking/server
          ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   merkle_server_lib

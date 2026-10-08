@@ -182,12 +182,17 @@ protected:
         5); // ensure subsequent operations have strictly newer wall-clock time
   }
 
-  void waitForSync(FileClient &client) {
+  // Returns true if syncCompleted fired, false on timeout.
+  bool waitForSync(FileClient &client, int timeoutMs = 5000) {
     QEventLoop loop;
-    QObject::connect(&client, &FileClient::syncCompleted, &loop,
-                     &QEventLoop::quit);
-    QTimer::singleShot(100, &loop, &QEventLoop::quit);
+    bool completed = false;
+    QObject::connect(&client, &FileClient::syncCompleted, &loop, [&] {
+      completed = true;
+      loop.quit();
+    });
+    QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
     loop.exec();
+    return completed;
   }
   bool filesystemsAreEqual() {
     return this->client->getStorage()->isEqualTo(*this->fileServer.getStorage(),
@@ -211,7 +216,7 @@ TYPED_TEST(SyncTest, singularFileIsSynced) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
@@ -226,7 +231,7 @@ TYPED_TEST(SyncTest, serverFileOlderThanClientIsUpdated) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
@@ -241,7 +246,7 @@ TYPED_TEST(SyncTest, serverFileNewerThanClientIsRejected) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   auto serverContents =
       this->fileServer.getStorage()->readFile(this->username, filename);
@@ -262,7 +267,7 @@ TYPED_TEST(SyncTest, fileInNewDirectoryIsSynced) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
@@ -272,7 +277,7 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   auto contentsBefore =
       this->fileServer.getStorage()->readFile(this->username, "test.txt");
@@ -285,7 +290,7 @@ TYPED_TEST(SyncTest, deletedFileIsSyncedToServer) {
   ASSERT_TRUE(
       this->client->getStorage()->deleteFile(this->username, "test.txt"));
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
   ASSERT_FALSE(this->fileServer.getStorage()
@@ -299,7 +304,7 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
 
   QCoreApplication::processEvents();
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->fileServer.getStorage()
                   ->readFile(this->username, "subdir/file1.txt")
@@ -315,7 +320,7 @@ TYPED_TEST(SyncTest, directoryDeleteIsSyncedToServer) {
   ASSERT_TRUE(this->client->getStorage()->deleteFile(this->username,
                                                      "subdir/file2.txt"));
   this->client->clientTick();
-  this->waitForSync(*(this->client));
+  ASSERT_TRUE(this->waitForSync(*(this->client)));
 
   ASSERT_TRUE(this->filesystemsAreEqual());
 }
@@ -386,14 +391,22 @@ protected:
     return client;
   }
 
-  void tickAndWait(FileClient &client) {
+  // Returns true if syncCompleted fired, false on timeout. Connects before
+  // ticking so a completion emitted during clientTick() is not missed.
+  bool tickAndWait(FileClient &client, int timeoutMs = 5000) {
+    QEventLoop loop;
+    bool completed = false;
+    QObject::connect(&client, &FileClient::syncCompleted, &loop, [&] {
+      completed = true;
+      loop.quit();
+    });
     QCoreApplication::processEvents();
     client.clientTick();
-    QEventLoop loop;
-    QObject::connect(&client, &FileClient::syncCompleted, &loop,
-                     &QEventLoop::quit);
-    QTimer::singleShot(500, &loop, &QEventLoop::quit);
-    loop.exec();
+    if (!completed) {
+      QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+      loop.exec();
+    }
+    return completed;
   }
 
   QString endpointFor(TransportProtocol protocol, const QString &runId) {
@@ -427,9 +440,9 @@ TYPED_TEST_SUITE(MultiDeviceSyncTest, MultiDeviceSyncTestImplementations);
 
 TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {
   this->deviceA->writeFile(this->username, "test.txt", "Hello World");
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   ASSERT_TRUE(this->deviceA->getStorage()->isEqualTo(
       *this->fileServer.getStorage(), this->username));
@@ -442,7 +455,7 @@ TYPED_TEST(MultiDeviceSyncTest, singularFileIsSyncedAcrossDevices) {
 TYPED_TEST(MultiDeviceSyncTest, deviceCanReceiveExistingServerState) {
   this->fileServer.writeFile(this->username, "test.txt", "preexisting",
                              QDateTime::currentDateTime());
-  this->tickAndWait(*this->deviceA);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
 
   auto contents =
       this->deviceA->getStorage()->readFile(this->username, "test.txt");
@@ -453,9 +466,9 @@ TYPED_TEST(MultiDeviceSyncTest, deviceCanReceiveExistingServerState) {
 TYPED_TEST(MultiDeviceSyncTest, fileInNewDirectoryIsSyncedAcrossDevices) {
   this->deviceA->writeFile(this->username, "subdir/nested/test.txt",
                            "nested content");
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   ASSERT_TRUE(this->deviceB->getStorage()->isEqualTo(
       *this->fileServer.getStorage(), this->username));
@@ -466,9 +479,9 @@ TYPED_TEST(MultiDeviceSyncTest, fileInNewDirectoryIsSyncedAcrossDevices) {
 TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
   // All three devices have the file
   this->deviceA->writeFile(this->username, "shared.txt", "hello");
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   ASSERT_TRUE(this->deviceB->getStorage()
                   ->readFile(this->username, "shared.txt")
@@ -481,11 +494,11 @@ TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
   // A deletes through storage; the scan detects the absence on next tick
   ASSERT_TRUE(
       this->deviceA->getStorage()->deleteFile(this->username, "shared.txt"));
-  this->tickAndWait(*this->deviceA);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
 
   // B and C should learn about the deletion
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   ASSERT_FALSE(this->deviceB->getStorage()
                    ->readFile(this->username, "shared.txt")
@@ -498,18 +511,18 @@ TYPED_TEST(MultiDeviceSyncTest, deletionPropagatesAcrossDevices) {
 TYPED_TEST(MultiDeviceSyncTest, directoryDeletionPropagatesAcrossDevices) {
   this->deviceA->writeFile(this->username, "subdir/file1.txt", "file1");
   this->deviceA->writeFile(this->username, "subdir/file2.txt", "file2");
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   this->addMinimumDelayForTimestampOrdering();
   ASSERT_TRUE(this->deviceA->getStorage()->deleteFile(this->username,
                                                       "subdir/file1.txt"));
   ASSERT_TRUE(this->deviceA->getStorage()->deleteFile(this->username,
                                                       "subdir/file2.txt"));
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   ASSERT_TRUE(this->deviceB->getStorage()->isEqualTo(
       *this->fileServer.getStorage(), this->username));
@@ -524,9 +537,9 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerWinsForAllDevices) {
   this->deviceA->writeFile(this->username, "test.txt", "device A older");
   this->deviceB->writeFile(this->username, "test.txt", "device B older");
 
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
-  this->tickAndWait(*this->deviceC);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceC));
 
   for (auto *dev :
        {this->deviceA.get(), this->deviceB.get(), this->deviceC.get()}) {
@@ -538,8 +551,8 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerWinsForAllDevices) {
 
 TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
   this->deviceA->writeFile(this->username, "test.txt", "original");
-  this->tickAndWait(*this->deviceA);
-  this->tickAndWait(*this->deviceB);
+  ASSERT_TRUE(this->tickAndWait(*this->deviceA));
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB));
 
   this->addMinimumDelayForTimestampOrdering();
   // A deletes through storage (detected as absent by A's next scan)
@@ -550,10 +563,10 @@ TYPED_TEST(MultiDeviceSyncTest, serverNewerRejectsClientDelete) {
   this->addMinimumDelayForTimestampOrdering();
   this->deviceB->writeFile(this->username, "test.txt",
                            "B's newer version"); // later than delete
-  this->tickAndWait(*this->deviceB); // B's newer version reaches server FIRST
+  ASSERT_TRUE(this->tickAndWait(*this->deviceB)); // B's newer version reaches server FIRST
 
-  this->tickAndWait(
-      *this->deviceA); // A's stale delete arrives -> server rejects
+  ASSERT_TRUE(this->tickAndWait(
+      *this->deviceA)); // A's stale delete arrives -> server rejects
 
   auto serverContents =
       this->fileServer.getStorage()->readFile(this->username, "test.txt");
