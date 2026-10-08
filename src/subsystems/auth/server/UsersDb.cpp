@@ -5,10 +5,17 @@
 
 namespace {
 
-// Argon2id cost. INTERACTIVE (~64 MiB, 2 passes) is libsodium's recommendation
-// for online logins — raise to MODERATE/SENSITIVE if the server can spare it.
-constexpr unsigned long long kOpsLimit = crypto_pwhash_OPSLIMIT_INTERACTIVE;
-constexpr size_t kMemLimit = crypto_pwhash_MEMLIMIT_INTERACTIVE;
+// Argon2id cost, chosen by the build via AUTH_ARGON2_PROFILE (see this
+// directory's CMakeLists.txt). INTERACTIVE (~64 MiB, 2 passes) is libsodium's
+// recommendation for online logins and the production minimum; test builds use
+// MIN. Falls back to INTERACTIVE if the build did not set it.
+#ifndef AUTH_ARGON2_OPSLIMIT
+#define AUTH_ARGON2_OPSLIMIT crypto_pwhash_OPSLIMIT_INTERACTIVE
+#define AUTH_ARGON2_MEMLIMIT crypto_pwhash_MEMLIMIT_INTERACTIVE
+#define AUTH_ARGON2_PROFILE_NAME "INTERACTIVE"
+#endif
+constexpr unsigned long long kOpsLimit = AUTH_ARGON2_OPSLIMIT;
+constexpr size_t kMemLimit = AUTH_ARGON2_MEMLIMIT;
 
 // Wipes the plaintext copy we had to make to reach libsodium's char* API.
 struct ScopedPassword {
@@ -40,6 +47,18 @@ UsersDb::UsersDb() {
   // RNG. Nothing else in libsodium may be used before it succeeds.
   if (sodium_init() < 0)
     qFatal("libsodium failed to initialise; cannot handle credentials");
+
+  static const bool logged = [] {
+    qInfo().nospace() << "UsersDb: Argon2id profile " << AUTH_ARGON2_PROFILE_NAME
+                      << " (opslimit=" << kOpsLimit << ", memlimit="
+                      << kMemLimit / 1024 << " KiB)";
+    if (kOpsLimit < crypto_pwhash_OPSLIMIT_INTERACTIVE ||
+        kMemLimit < crypto_pwhash_MEMLIMIT_INTERACTIVE)
+      qWarning() << "UsersDb: Argon2id cost is below INTERACTIVE; this build is "
+                    "only suitable for tests, not production";
+    return true;
+  }();
+  Q_UNUSED(logged);
 }
 
 void UsersDb::storeUser(const QString &user, const QString &password,
